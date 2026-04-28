@@ -1,0 +1,104 @@
+# Benchmarks a real Azure Blob Storage NFS v3 export against BlobFuse and local scratch.
+#
+# Prerequisites:
+# - Storage account created with HNS + NFS v3 enabled.
+# - Container exists in that account.
+# - AKS node subnet has Microsoft.Storage service endpoint enabled.
+# - Storage account firewall allows the AKS node subnet.
+#
+# Example network setup:
+#   az network vnet subnet update --ids "$AKS_SUBNET_ID" --service-endpoints Microsoft.Storage
+#   az storage account network-rule add -g "$RG" -n "$ACCOUNT" --subnet "$AKS_SUBNET_ID"
+#
+# Replace ACCOUNT_NAME, CONTAINER_NAME, namespace, and PVC names before applying.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: azure-blob-nfs-benchmark-pv
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - vers=3
+    - nolock
+    - proto=tcp
+  nfs:
+    server: ACCOUNT_NAME.blob.core.windows.net
+    path: /ACCOUNT_NAME/CONTAINER_NAME
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: azure-blob-nfs-benchmark
+  namespace: ray
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: azure-blob-nfs-benchmark-pv
+  resources:
+    requests:
+      storage: 1Ti
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: azure-blob-nfs-benchmark
+  namespace: ray
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: cpu
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              azure-storage-benchmark run \
+                --path blob=/data \
+                --path nfs-real=/mnt/nfs-real \
+                --path local=/scratch \
+                --small-files 1000 \
+                --small-file-size-kib 4 \
+                --large-file-size-mib 512 \
+                --checkpoint-files 2 \
+                --checkpoint-size-mib 256 \
+                --iterations 3 \
+                --output-json /data/storage-benchmarks/azure-blob-nfs-v3.json \
+                --output-md /data/storage-benchmarks/azure-blob-nfs-v3.md
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: nfs-real
+              mountPath: /mnt/nfs-real
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: nfs-real
+          persistentVolumeClaim:
+            claimName: azure-blob-nfs-benchmark
+        - name: scratch
+          emptyDir: {}
+

@@ -72,6 +72,13 @@ The example Job compares:
 
 Adjust PVC names, namespace, image, and sizes for your cluster.
 
+Additional examples:
+
+- `examples/kubernetes/azure-disk-options-job.yaml` creates temporary Azure Disk
+  PVCs for Standard SSD and Premium SSD StorageClasses.
+- `examples/kubernetes/azure-blob-nfs-v3-job.yaml` mounts a real Azure Blob NFS
+  v3 export. This requires storage account firewall/VNet setup before applying.
+
 ## CLI
 
 ```bash
