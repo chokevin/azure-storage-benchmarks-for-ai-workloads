@@ -16,6 +16,7 @@ The benchmark CLI exercises patterns that commonly hurt AI jobs:
 | Small-file create/read/list | Tokenized datasets, manifests, eval outputs, metadata-heavy pipelines |
 | Large-file sequential read/write | Model weights, checkpoints, archives |
 | Checkpoint-like atomic writes | Write temp file, flush, rename into place |
+| Raw transfer samples | Per-iteration bytes, seconds, GB/s, GiB/s, and Gbps |
 | Markdown/JSON reporting | Easy comparison across mounts and clusters |
 
 Typical AKS targets:
@@ -24,8 +25,15 @@ Typical AKS targets:
 |---|---|---|
 | Azure Blob CSI / BlobFuse | `/data` | Durable shared source of truth |
 | Azure Blob Storage NFS v3 | `/data-nfs` | Shared filesystem for active writes/results |
+| Azure Files Premium | `/azure-files` | General RWX file share, usually simpler than high-end parallel filesystems |
+| Azure NetApp Files | `/anf` | High-performance shared filesystem with managed NFS/SMB |
+| Managed Disk / Ultra Disk | `/mnt/disk` | Fast single-node RWO block storage |
 | Node-local scratch / NVMe | `/scratch` | Fast ephemeral cache or staging |
 | Alluxio cache over Blob/ADLS | `/data-alluxio` | Optional warm read cache for repeated model/dataset reads |
+
+See [docs/storage-alternatives.md](docs/storage-alternatives.md) for a broader
+alternatives matrix, including Lustre-style filesystems, WEKA, MinIO, Ceph, and
+cache layers.
 
 ## Quick start: local smoke test
 
@@ -83,6 +91,16 @@ azure-storage-benchmark run \
 Use `--keep-data` if you want to inspect the generated files. Otherwise the CLI
 deletes its per-run directory after each path completes.
 
+The JSON report contains raw transfer samples under:
+
+```text
+results[].raw.transfer_samples[]
+```
+
+Each sample includes `operation`, `bytes`, `seconds`, decimal `gb_s`, binary
+`gib_s`, and network-style `gbps`. The Markdown report renders the same raw
+samples below the summary table.
+
 ## Reading results
 
 Prefer matching the storage to the workload:
@@ -101,4 +119,3 @@ but they also add operations, eviction, consistency, and failure-mode questions.
 
 This is an unofficial experimental benchmark harness. It is not an Azure product
 recommendation and does not imply support for any specific storage layout.
-
