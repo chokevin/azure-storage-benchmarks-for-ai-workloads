@@ -1,0 +1,104 @@
+# Azure Storage Benchmarks for AI Workloads
+
+Unofficial, reproducible benchmarks for comparing storage choices used by AI
+training and inference jobs on AKS.
+
+The goal is not to crown one storage system universally. The goal is to make it
+easy to answer: **is storage starving my GPU workload, and which mount should I
+use for this access pattern?**
+
+## What this measures
+
+The benchmark CLI exercises patterns that commonly hurt AI jobs:
+
+| Pattern | Why it matters |
+|---|---|
+| Small-file create/read/list | Tokenized datasets, manifests, eval outputs, metadata-heavy pipelines |
+| Large-file sequential read/write | Model weights, checkpoints, archives |
+| Checkpoint-like atomic writes | Write temp file, flush, rename into place |
+| Markdown/JSON reporting | Easy comparison across mounts and clusters |
+
+Typical AKS targets:
+
+| Target | Example mount | Expected use |
+|---|---|---|
+| Azure Blob CSI / BlobFuse | `/data` | Durable shared source of truth |
+| Azure Blob Storage NFS v3 | `/data-nfs` | Shared filesystem for active writes/results |
+| Node-local scratch / NVMe | `/scratch` | Fast ephemeral cache or staging |
+| Alluxio cache over Blob/ADLS | `/data-alluxio` | Optional warm read cache for repeated model/dataset reads |
+
+## Quick start: local smoke test
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+azure-storage-benchmark run \
+  --path local=/tmp/azure-storage-benchmark \
+  --small-files 100 \
+  --large-file-size-mib 16 \
+  --checkpoint-size-mib 8 \
+  --output-json storage-benchmark-results.json \
+  --output-md storage-benchmark-results.md
+```
+
+## Quick start: AKS Job
+
+Build and publish an image, or replace the image in
+`examples/kubernetes/storage-benchmark-job.yaml` with your own:
+
+```bash
+docker build -t ghcr.io/chokevin/azure-storage-benchmarks-for-ai-workloads:latest .
+docker push ghcr.io/chokevin/azure-storage-benchmarks-for-ai-workloads:latest
+
+kubectl apply -f examples/kubernetes/storage-benchmark-job.yaml
+kubectl -n ray logs job/azure-storage-benchmark
+```
+
+The example Job compares:
+
+- `blob=/data` from PVC `blob-training`
+- `nfs=/data-nfs` from PVC `training-nfs`
+- `local=/scratch` from `emptyDir`
+
+Adjust PVC names, namespace, image, and sizes for your cluster.
+
+## CLI
+
+```bash
+azure-storage-benchmark run \
+  --path blob=/data \
+  --path nfs=/data-nfs \
+  --path local=/scratch \
+  --small-files 1000 \
+  --small-file-size-kib 4 \
+  --large-file-size-mib 1024 \
+  --checkpoint-files 4 \
+  --checkpoint-size-mib 256 \
+  --iterations 3 \
+  --output-json /data-nfs/storage-benchmarks/results.json \
+  --output-md /data-nfs/storage-benchmarks/results.md
+```
+
+Use `--keep-data` if you want to inspect the generated files. Otherwise the CLI
+deletes its per-run directory after each path completes.
+
+## Reading results
+
+Prefer matching the storage to the workload:
+
+| Workload shape | Usually start with |
+|---|---|
+| Durable source datasets and archives | Blob/ADLS |
+| Hot checkpoints, adapters, leaderboards, frequent renames | NFS/shared filesystem |
+| Repeated read-only model/data access | NFS or a cache layer such as Alluxio |
+| Temporary preprocessing on one node | local NVMe/`emptyDir` |
+
+Measure before changing the platform. Cache layers can improve repeated reads,
+but they also add operations, eviction, consistency, and failure-mode questions.
+
+## Disclaimer
+
+This is an unofficial experimental benchmark harness. It is not an Azure product
+recommendation and does not imply support for any specific storage layout.
+

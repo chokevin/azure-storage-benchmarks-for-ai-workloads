@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: azure-storage-benchmark
+  namespace: ray
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: benchmark
+          image: ghcr.io/chokevin/azure-storage-benchmarks-for-ai-workloads:latest
+          imagePullPolicy: Always
+          args:
+            - run
+            - --path
+            - blob=/data
+            - --path
+            - nfs=/data-nfs
+            - --path
+            - local=/scratch
+            - --small-files
+            - "1000"
+            - --small-file-size-kib
+            - "4"
+            - --large-file-size-mib
+            - "1024"
+            - --checkpoint-files
+            - "4"
+            - --checkpoint-size-mib
+            - "256"
+            - --iterations
+            - "3"
+            - --output-json
+            - /data-nfs/storage-benchmarks/results.json
+            - --output-md
+            - /data-nfs/storage-benchmarks/results.md
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: training-nfs
+              mountPath: /data-nfs
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: training-nfs
+          persistentVolumeClaim:
+            claimName: training-nfs
+        - name: scratch
+          emptyDir: {}
+

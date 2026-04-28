@@ -1,0 +1,31 @@
+# Example only. Azure Blob Storage NFS requires an NFS-enabled storage account
+# and network access from the AKS node subnet.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: training-nfs-pv
+spec:
+  capacity:
+    storage: 1Pi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: REPLACE_WITH_ACCOUNT.blob.core.windows.net
+    path: /REPLACE_WITH_ACCOUNT/REPLACE_WITH_CONTAINER
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-nfs
+  namespace: ray
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: training-nfs-pv
+  resources:
+    requests:
+      storage: 1Pi
+

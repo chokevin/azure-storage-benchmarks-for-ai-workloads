@@ -1,0 +1,30 @@
+# Optional example: add an Alluxio-backed mount to the benchmark Job.
+# Replace claimName with the PVC exposed by your Alluxio CSI/FUSE setup.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: azure-storage-benchmark
+  namespace: ray
+spec:
+  template:
+    spec:
+      containers:
+        - name: benchmark
+          args:
+            - run
+            - --path
+            - blob=/data
+            - --path
+            - nfs=/data-nfs
+            - --path
+            - alluxio=/data-alluxio
+            - --path
+            - local=/scratch
+          volumeMounts:
+            - name: alluxio-cache
+              mountPath: /data-alluxio
+      volumes:
+        - name: alluxio-cache
+          persistentVolumeClaim:
+            claimName: alluxio-cache
+

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "azure-storage-benchmarks-for-ai-workloads"
+version = "0.1.0"
+description = "Reproducible AKS storage benchmarks for AI workload access patterns"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Kevin Cho"}]
+dependencies = []
+
+[project.scripts]
+azure-storage-benchmark = "azure_storage_benchmarks.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

@@ -1,0 +1,38 @@
+# Example only. Fill in storage account, container, secret, and volumeHandle.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: blob-training-pv
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - -o allow_other
+    - --file-cache-timeout-in-seconds=120
+  csi:
+    driver: blob.csi.azure.com
+    volumeHandle: REPLACE_WITH_UNIQUE_HANDLE
+    volumeAttributes:
+      containerName: REPLACE_WITH_CONTAINER
+    nodeStageSecretRef:
+      name: azure-blob-secret
+      namespace: ray
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: blob-training
+  namespace: ray
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: blob-training-pv
+  resources:
+    requests:
+      storage: 1Ti
+
