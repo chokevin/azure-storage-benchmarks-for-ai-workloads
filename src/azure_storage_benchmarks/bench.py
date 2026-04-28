@@ -63,7 +63,7 @@ def run_benchmarks(paths: dict[str, Path], config: BenchmarkConfig) -> dict:
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     results = {
-        "schema_version": "2",
+        "schema_version": "3",
         "run_id": run_id,
         "started_at": started_at,
         "host": {
@@ -93,6 +93,7 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
     path_result = {
         "name": name,
         "path": str(base_path),
+        "mount": _mount_info_for(base_path),
         "ok": False,
         "metrics": {},
         "raw": {},
@@ -152,6 +153,10 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
         small_total_bytes = config.small_files * config.small_file_size_kib * KIB
         large_total_bytes = config.large_file_size_mib * MIB
         checkpoint_total_bytes = config.checkpoint_files * config.checkpoint_size_mib * MIB
+        small_read_first_seconds = raw["small_read_seconds"][0]
+        small_read_warm_seconds = _median_tail_or_all(raw["small_read_seconds"])
+        large_read_first_seconds = raw["large_read_seconds"][0]
+        large_read_warm_seconds = _median_tail_or_all(raw["large_read_seconds"])
         raw["transfer_samples"] = [
             _transfer_sample(
                 operation="small_write",
@@ -190,6 +195,12 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
 
         metrics = {
             "small_write_ms_per_file": _ms_per_item(raw["small_write_seconds"], config.small_files),
+            "small_read_first_ms_per_file": _ms_per_item(
+                small_read_first_seconds, config.small_files
+            ),
+            "small_read_warm_ms_per_file": _ms_per_item(
+                small_read_warm_seconds, config.small_files
+            ),
             "small_read_ms_per_file": _ms_per_item(
                 statistics.median(raw["small_read_seconds"]), config.small_files
             ),
@@ -204,6 +215,12 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
             "large_write_gbps": _gbps(large_total_bytes, raw["large_write_seconds"]),
             "large_read_mib_s": _mib_per_second(
                 large_total_bytes, statistics.median(raw["large_read_seconds"])
+            ),
+            "large_read_first_gb_s": _gb_per_second(
+                large_total_bytes, large_read_first_seconds
+            ),
+            "large_read_warm_gb_s": _gb_per_second(
+                large_total_bytes, large_read_warm_seconds
             ),
             "large_read_gb_s": _gb_per_second(
                 large_total_bytes, statistics.median(raw["large_read_seconds"])
@@ -247,18 +264,23 @@ def render_markdown(report: dict) -> str:
         f"- Started: `{report['started_at']}`",
         f"- Host: `{report['host']['hostname']}`",
         "",
-        "| Target | OK | Small read ms/file | List ms/1000 files | Large read GB/s | Large write GB/s | Checkpoint write GB/s | Error |",
-        "|---|---:|---:|---:|---:|---:|---:|---|",
+        "| Target | OK | FS type | Mount source | Small read first ms/file | Small read warm ms/file | List ms/1000 files | Large read first GB/s | Large read warm GB/s | Large write GB/s | Checkpoint write GB/s | Error |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for result in report["results"]:
         metrics = result.get("metrics", {})
+        mount = result.get("mount") or {}
         lines.append(
-            "| {name} | {ok} | {small_read} | {list_ms} | {large_read} | {large_write} | {checkpoint_write} | {error} |".format(
+            "| {name} | {ok} | {fs_type} | {source} | {small_read_first} | {small_read_warm} | {list_ms} | {large_read_first} | {large_read_warm} | {large_write} | {checkpoint_write} | {error} |".format(
                 name=result["name"],
                 ok="yes" if result["ok"] else "no",
-                small_read=_fmt_metric(metrics.get("small_read_ms_per_file")),
+                fs_type=(mount.get("fs_type") or "").replace("|", "\\|"),
+                source=(mount.get("source") or "").replace("|", "\\|"),
+                small_read_first=_fmt_metric(metrics.get("small_read_first_ms_per_file")),
+                small_read_warm=_fmt_metric(metrics.get("small_read_warm_ms_per_file")),
                 list_ms=_fmt_metric(metrics.get("list_ms_per_1000_files")),
-                large_read=_fmt_metric(metrics.get("large_read_gb_s")),
+                large_read_first=_fmt_metric(metrics.get("large_read_first_gb_s")),
+                large_read_warm=_fmt_metric(metrics.get("large_read_warm_gb_s")),
                 large_write=_fmt_metric(metrics.get("large_write_gb_s")),
                 checkpoint_write=_fmt_metric(metrics.get("checkpoint_write_gb_s")),
                 error=(result.get("error") or "").replace("|", "\\|"),
@@ -285,6 +307,12 @@ def _time_call(fn) -> float:
     start = time.perf_counter()
     fn()
     return time.perf_counter() - start
+
+
+def _median_tail_or_all(values: list[float]) -> float:
+    if len(values) > 1:
+        return statistics.median(values[1:])
+    return statistics.median(values)
 
 
 def _write_small_files(directory: Path, count: int, size_bytes: int) -> None:
@@ -349,6 +377,61 @@ def _mib_per_second(bytes_count: int, seconds: float) -> float:
     if seconds <= 0:
         return 0.0
     return (bytes_count / MIB) / seconds
+
+
+def _mount_info_for(path: Path) -> dict:
+    mountinfo = Path("/proc/self/mountinfo")
+    if not mountinfo.exists():
+        return {}
+
+    resolved_path = path.resolve()
+    best_match: dict | None = None
+    best_length = -1
+    for line in mountinfo.read_text(encoding="utf-8").splitlines():
+        parsed = _parse_mountinfo_line(line)
+        if not parsed:
+            continue
+        mount_point = Path(parsed["mount_point"])
+        if (
+            _path_is_at_or_below(resolved_path, mount_point)
+            and len(parsed["mount_point"]) > best_length
+        ):
+            best_match = parsed
+            best_length = len(parsed["mount_point"])
+    return best_match or {}
+
+
+def _parse_mountinfo_line(line: str) -> dict | None:
+    if " - " not in line:
+        return None
+    left, right = line.split(" - ", 1)
+    left_fields = left.split()
+    right_fields = right.split()
+    if len(left_fields) < 5 or len(right_fields) < 2:
+        return None
+    return {
+        "mount_point": _decode_mountinfo_field(left_fields[4]),
+        "root": _decode_mountinfo_field(left_fields[3]),
+        "fs_type": _decode_mountinfo_field(right_fields[0]),
+        "source": _decode_mountinfo_field(right_fields[1]),
+    }
+
+
+def _decode_mountinfo_field(value: str) -> str:
+    return (
+        value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
+
+
+def _path_is_at_or_below(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _gb_per_second(bytes_count: int, seconds: float) -> float:

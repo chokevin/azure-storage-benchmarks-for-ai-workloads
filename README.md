@@ -17,6 +17,7 @@ The benchmark CLI exercises patterns that commonly hurt AI jobs:
 | Large-file sequential read/write | Model weights, checkpoints, archives |
 | Checkpoint-like atomic writes | Write temp file, flush, rename into place |
 | Raw transfer samples | Per-iteration bytes, seconds, GB/s, GiB/s, and Gbps |
+| Mount identity | Filesystem type and mount source from `/proc/self/mountinfo` when available |
 | Markdown/JSON reporting | Easy comparison across mounts and clusters |
 
 Typical AKS targets:
@@ -100,6 +101,15 @@ results[].raw.transfer_samples[]
 Each sample includes `operation`, `bytes`, `seconds`, decimal `gb_s`, binary
 `gib_s`, and network-style `gbps`. The Markdown report renders the same raw
 samples below the summary table.
+
+The summary table separates **first read** from **warm read** throughput. First
+read is the closest signal this simple benchmark has for cold-ish storage access.
+Warm reads are often served from kernel page cache, FUSE cache, or a storage
+client cache and can look like local memory/disk instead of remote storage.
+
+Also check the `FS type` and `Mount source` columns. If two paths report the
+same filesystem type/source, you may be comparing two aliases for the same
+backend rather than two independent storage systems.
 
 ## Reading results
 

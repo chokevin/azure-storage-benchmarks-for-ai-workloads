@@ -41,11 +41,14 @@ class BenchmarkTests(unittest.TestCase):
 
             report = run_benchmarks({"tmp": Path(tmp)}, config)
 
-        self.assertEqual(report["schema_version"], "2")
+        self.assertEqual(report["schema_version"], "3")
         self.assertEqual(report["results"][0]["name"], "tmp")
+        self.assertIn("mount", report["results"][0])
         self.assertTrue(report["results"][0]["ok"], report["results"][0]["error"])
         self.assertGreater(report["results"][0]["metrics"]["large_read_mib_s"], 0)
         self.assertGreater(report["results"][0]["metrics"]["large_read_gb_s"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["large_read_first_gb_s"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["large_read_warm_gb_s"], 0)
         self.assertGreater(report["results"][0]["metrics"]["large_read_gbps"], 0)
         samples = report["results"][0]["raw"]["transfer_samples"]
         self.assertTrue(any(sample["operation"] == "large_read" for sample in samples))
@@ -61,12 +64,15 @@ class BenchmarkTests(unittest.TestCase):
                     {
                         "name": "tmp",
                         "ok": True,
+                        "mount": {"fs_type": "tmpfs", "source": "tmpfs"},
                         "metrics": {
-                            "small_read_ms_per_file": 1.0,
+                            "small_read_first_ms_per_file": 1.0,
+                            "small_read_warm_ms_per_file": 0.5,
                             "list_ms_per_1000_files": 2.0,
-                            "large_read_mib_s": 3.0,
-                            "large_write_mib_s": 4.0,
-                            "checkpoint_write_mib_s": 5.0,
+                            "large_read_first_gb_s": 3.0,
+                            "large_read_warm_gb_s": 6.0,
+                            "large_write_gb_s": 4.0,
+                            "checkpoint_write_gb_s": 5.0,
                         },
                         "raw": {
                             "transfer_samples": [
@@ -92,7 +98,8 @@ class BenchmarkTests(unittest.TestCase):
             markdown = render_markdown(loaded)
 
         self.assertEqual(loaded["run_id"], "unit")
-        self.assertIn("| tmp | yes |", markdown)
+        self.assertIn("| tmp | yes | tmpfs | tmpfs |", markdown)
+        self.assertIn("Large read first GB/s", markdown)
         self.assertIn("Raw transfer samples", markdown)
         self.assertIn("| tmp | large_read | 1 | 1024 |", markdown)
 
