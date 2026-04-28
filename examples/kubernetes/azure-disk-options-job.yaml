@@ -1,0 +1,129 @@
+# Benchmarks AKS-managed Azure Disk StorageClasses against BlobFuse and local scratch.
+#
+# This creates temporary 128Gi RWO disks. Delete the PVCs after the Job if you
+# copy this manifest manually; the PV reclaim policy for these dynamic disks is
+# Delete, so deleting the PVCs removes the managed disks.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-benchmark-standard-csi
+  namespace: ray
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-benchmark-standard-managed
+  namespace: ray
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: managed
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-benchmark-premium-csi
+  namespace: ray
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: managed-csi-premium
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-benchmark-premium-managed
+  namespace: ray
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: managed-premium
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: azure-disk-options-benchmark
+  namespace: ray
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        agentpool: cpu
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              azure-storage-benchmark run \
+                --path blob=/data \
+                --path disk-standard-csi=/mnt/standard-csi \
+                --path disk-standard-managed=/mnt/standard-managed \
+                --path disk-premium-csi=/mnt/premium-csi \
+                --path disk-premium-managed=/mnt/premium-managed \
+                --path local=/scratch \
+                --small-files 1000 \
+                --small-file-size-kib 4 \
+                --large-file-size-mib 512 \
+                --checkpoint-files 2 \
+                --checkpoint-size-mib 256 \
+                --iterations 3 \
+                --output-json /data/storage-benchmarks/azure-disk-options.json \
+                --output-md /data/storage-benchmarks/azure-disk-options.md
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: standard-csi
+              mountPath: /mnt/standard-csi
+            - name: standard-managed
+              mountPath: /mnt/standard-managed
+            - name: premium-csi
+              mountPath: /mnt/premium-csi
+            - name: premium-managed
+              mountPath: /mnt/premium-managed
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: standard-csi
+          persistentVolumeClaim:
+            claimName: storage-benchmark-standard-csi
+        - name: standard-managed
+          persistentVolumeClaim:
+            claimName: storage-benchmark-standard-managed
+        - name: premium-csi
+          persistentVolumeClaim:
+            claimName: storage-benchmark-premium-csi
+        - name: premium-managed
+          persistentVolumeClaim:
+            claimName: storage-benchmark-premium-managed
+        - name: scratch
+          emptyDir: {}
+
