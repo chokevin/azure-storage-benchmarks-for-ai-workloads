@@ -15,6 +15,8 @@ from typing import Iterable
 
 MIB = 1024 * 1024
 KIB = 1024
+GB = 1000 * 1000 * 1000
+GIB = 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ def run_benchmarks(paths: dict[str, Path], config: BenchmarkConfig) -> dict:
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     results = {
-        "schema_version": "1",
+        "schema_version": "2",
         "run_id": run_id,
         "started_at": started_at,
         "host": {
@@ -150,6 +152,41 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
         small_total_bytes = config.small_files * config.small_file_size_kib * KIB
         large_total_bytes = config.large_file_size_mib * MIB
         checkpoint_total_bytes = config.checkpoint_files * config.checkpoint_size_mib * MIB
+        raw["transfer_samples"] = [
+            _transfer_sample(
+                operation="small_write",
+                bytes_count=small_total_bytes,
+                seconds=raw["small_write_seconds"],
+            ),
+            *[
+                _transfer_sample(
+                    operation="small_read",
+                    bytes_count=small_total_bytes,
+                    seconds=seconds,
+                    iteration=index,
+                )
+                for index, seconds in enumerate(raw["small_read_seconds"], start=1)
+            ],
+            _transfer_sample(
+                operation="large_write",
+                bytes_count=large_total_bytes,
+                seconds=raw["large_write_seconds"],
+            ),
+            *[
+                _transfer_sample(
+                    operation="large_read",
+                    bytes_count=large_total_bytes,
+                    seconds=seconds,
+                    iteration=index,
+                )
+                for index, seconds in enumerate(raw["large_read_seconds"], start=1)
+            ],
+            _transfer_sample(
+                operation="checkpoint_write",
+                bytes_count=checkpoint_total_bytes,
+                seconds=raw["checkpoint_write_seconds"],
+            ),
+        ]
 
         metrics = {
             "small_write_ms_per_file": _ms_per_item(raw["small_write_seconds"], config.small_files),
@@ -163,10 +200,24 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
                 statistics.median(raw["list_seconds"]), config.small_files
             ),
             "large_write_mib_s": _mib_per_second(large_total_bytes, raw["large_write_seconds"]),
+            "large_write_gb_s": _gb_per_second(large_total_bytes, raw["large_write_seconds"]),
+            "large_write_gbps": _gbps(large_total_bytes, raw["large_write_seconds"]),
             "large_read_mib_s": _mib_per_second(
                 large_total_bytes, statistics.median(raw["large_read_seconds"])
             ),
+            "large_read_gb_s": _gb_per_second(
+                large_total_bytes, statistics.median(raw["large_read_seconds"])
+            ),
+            "large_read_gbps": _gbps(
+                large_total_bytes, statistics.median(raw["large_read_seconds"])
+            ),
             "checkpoint_write_mib_s": _mib_per_second(
+                checkpoint_total_bytes, raw["checkpoint_write_seconds"]
+            ),
+            "checkpoint_write_gb_s": _gb_per_second(
+                checkpoint_total_bytes, raw["checkpoint_write_seconds"]
+            ),
+            "checkpoint_write_gbps": _gbps(
                 checkpoint_total_bytes, raw["checkpoint_write_seconds"]
             ),
         }
@@ -196,7 +247,7 @@ def render_markdown(report: dict) -> str:
         f"- Started: `{report['started_at']}`",
         f"- Host: `{report['host']['hostname']}`",
         "",
-        "| Target | OK | Small read ms/file | List ms/1000 files | Large read MiB/s | Large write MiB/s | Checkpoint write MiB/s | Error |",
+        "| Target | OK | Small read ms/file | List ms/1000 files | Large read GB/s | Large write GB/s | Checkpoint write GB/s | Error |",
         "|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for result in report["results"]:
@@ -207,14 +258,16 @@ def render_markdown(report: dict) -> str:
                 ok="yes" if result["ok"] else "no",
                 small_read=_fmt_metric(metrics.get("small_read_ms_per_file")),
                 list_ms=_fmt_metric(metrics.get("list_ms_per_1000_files")),
-                large_read=_fmt_metric(metrics.get("large_read_mib_s")),
-                large_write=_fmt_metric(metrics.get("large_write_mib_s")),
-                checkpoint_write=_fmt_metric(metrics.get("checkpoint_write_mib_s")),
+                large_read=_fmt_metric(metrics.get("large_read_gb_s")),
+                large_write=_fmt_metric(metrics.get("large_write_gb_s")),
+                checkpoint_write=_fmt_metric(metrics.get("checkpoint_write_gb_s")),
                 error=(result.get("error") or "").replace("|", "\\|"),
             )
         )
     lines.append("")
-    lines.append("Lower latency is better for `ms/*` columns. Higher throughput is better for `MiB/s` columns.")
+    lines.append("Lower latency is better for `ms/*` columns. Higher throughput is better for `GB/s` and `Gbps` columns.")
+    lines.append("")
+    lines.extend(_render_transfer_samples(report))
     lines.append("")
     return "\n".join(lines)
 
@@ -297,3 +350,63 @@ def _mib_per_second(bytes_count: int, seconds: float) -> float:
         return 0.0
     return (bytes_count / MIB) / seconds
 
+
+def _gb_per_second(bytes_count: int, seconds: float) -> float:
+    if seconds <= 0:
+        return 0.0
+    return (bytes_count / GB) / seconds
+
+
+def _gib_per_second(bytes_count: int, seconds: float) -> float:
+    if seconds <= 0:
+        return 0.0
+    return (bytes_count / GIB) / seconds
+
+
+def _gbps(bytes_count: int, seconds: float) -> float:
+    return _gb_per_second(bytes_count, seconds) * 8
+
+
+def _transfer_sample(
+    operation: str,
+    bytes_count: int,
+    seconds: float,
+    iteration: int | None = None,
+) -> dict:
+    sample = {
+        "operation": operation,
+        "bytes": bytes_count,
+        "seconds": seconds,
+        "mb_s": (bytes_count / (1000 * 1000)) / seconds if seconds > 0 else 0.0,
+        "mib_s": _mib_per_second(bytes_count, seconds),
+        "gb_s": _gb_per_second(bytes_count, seconds),
+        "gib_s": _gib_per_second(bytes_count, seconds),
+        "gbps": _gbps(bytes_count, seconds),
+    }
+    if iteration is not None:
+        sample["iteration"] = iteration
+    return sample
+
+
+def _render_transfer_samples(report: dict) -> list[str]:
+    lines = [
+        "## Raw transfer samples",
+        "",
+        "| Target | Operation | Iteration | Bytes | Seconds | GB/s | GiB/s | Gbps |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for result in report["results"]:
+        for sample in result.get("raw", {}).get("transfer_samples", []):
+            lines.append(
+                "| {target} | {operation} | {iteration} | {bytes_count} | {seconds:.6f} | {gb_s:.6f} | {gib_s:.6f} | {gbps:.6f} |".format(
+                    target=result["name"],
+                    operation=sample["operation"],
+                    iteration=sample.get("iteration", ""),
+                    bytes_count=sample["bytes"],
+                    seconds=sample["seconds"],
+                    gb_s=sample["gb_s"],
+                    gib_s=sample["gib_s"],
+                    gbps=sample["gbps"],
+                )
+            )
+    return lines

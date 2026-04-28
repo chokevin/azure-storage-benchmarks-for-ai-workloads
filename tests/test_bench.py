@@ -41,10 +41,15 @@ class BenchmarkTests(unittest.TestCase):
 
             report = run_benchmarks({"tmp": Path(tmp)}, config)
 
-        self.assertEqual(report["schema_version"], "1")
+        self.assertEqual(report["schema_version"], "2")
         self.assertEqual(report["results"][0]["name"], "tmp")
         self.assertTrue(report["results"][0]["ok"], report["results"][0]["error"])
         self.assertGreater(report["results"][0]["metrics"]["large_read_mib_s"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["large_read_gb_s"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["large_read_gbps"], 0)
+        samples = report["results"][0]["raw"]["transfer_samples"]
+        self.assertTrue(any(sample["operation"] == "large_read" for sample in samples))
+        self.assertTrue(all("gb_s" in sample for sample in samples))
 
     def test_write_json_and_render_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,6 +68,19 @@ class BenchmarkTests(unittest.TestCase):
                             "large_write_mib_s": 4.0,
                             "checkpoint_write_mib_s": 5.0,
                         },
+                        "raw": {
+                            "transfer_samples": [
+                                {
+                                    "operation": "large_read",
+                                    "iteration": 1,
+                                    "bytes": 1024,
+                                    "seconds": 0.001,
+                                    "gb_s": 0.001024,
+                                    "gib_s": 0.000954,
+                                    "gbps": 0.008192,
+                                }
+                            ]
+                        },
                         "error": "",
                     }
                 ],
@@ -75,8 +93,9 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertEqual(loaded["run_id"], "unit")
         self.assertIn("| tmp | yes |", markdown)
+        self.assertIn("Raw transfer samples", markdown)
+        self.assertIn("| tmp | large_read | 1 | 1024 |", markdown)
 
 
 if __name__ == "__main__":
     unittest.main()
-
