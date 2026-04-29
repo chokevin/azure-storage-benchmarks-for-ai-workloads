@@ -169,6 +169,28 @@ The earlier numbers also reported a single `tokens/s` value that included
 checkpoint waits, which made GPU comparisons look contradictory when placed next
 to median step time.
 
+### 20 GiB checkpoint probe
+
+Artifact on the cluster:
+
+```text
+/data/storage-benchmarks/gpt2-async-20g-h100-20260429202505.{json,md}
+```
+
+After the 2 GiB-padding GPU-SKU run, a single H100 probe used 20,480 MiB of
+checkpoint padding. This produced checkpoint files above 20 GB each while
+avoiding cross-SKU contention against the same BlobFuse mount.
+
+| GPU SKU | Device | Checkpoint bytes each | Async checkpoint total GB | Pure step tokens/s | Loop tokens/s incl. checkpoint waits | Async writer GB/s | Async caller-blocked s | Sync final GB/s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| H100 | NVIDIA H100 NVL | 21,515,171,192 | 64.546 | 345,706 | 1,380 | 0.483925 | 133.288581 | 0.492306 |
+
+The larger checkpoint writes behaved more like sustained sequential writes than
+the smaller 2 GiB-padding run. The async writer and sync final checkpoint were
+both around 0.49 GB/s on BlobFuse in this capture, but the caller still spent
+over two minutes blocked across three async checkpoints because the toy model's
+training steps are far too short to hide ~21.5 GB checkpoint writes.
+
 ## Caveats
 
 - The staged targets are measured after copying the same sampled files from
