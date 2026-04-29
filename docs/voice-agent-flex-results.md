@@ -197,6 +197,58 @@ or sync timing. In all cases the caller still spent minutes blocked across three
 async checkpoints because the toy model's training steps are far too short to
 hide ~21.5 GB checkpoint writes.
 
+### Hot checkpoint path candidates
+
+Artifacts on the cluster:
+
+```text
+/data/storage-benchmarks/hot-checkpoint-h100-hostmnt-202604292140.{json,md}
+/data/storage-benchmarks/hot-checkpoint-a100-disk-202604292145.{json,md}
+/data/storage-benchmarks/hot-checkpoint-h200-hostmnt-202604292155.{json,md}
+```
+
+These runs use the same 20,480 MiB checkpoint shape, but isolate storage target
+behavior without the PyTorch model. Each sample writes a temp file, flushes,
+fsyncs, renames it into place, fsyncs the directory, then removes the checkpoint
+payload.
+
+| Node class | Target | FS/source | Mean GB/s | Mean seconds per 20 GiB checkpoint | Notes |
+|---|---|---|---:|---:|---|
+| H200 flex | host `/mnt` | ext4 `/dev/sdb1` | 1.146984 | 18.730 | Fastest observed hot path; ephemeral/local to node |
+| A100 VMSS | host `/mnt` | ext4 `/dev/sdb1` | 0.785619 | 27.360 | Faster than BlobFuse on the A100 pool; ephemeral/local to node |
+| H100 flex | BlobFuse `/data` | fuse `blobfuse2` | 0.524992 | 41.063 | Faster than H100 host `/mnt` in this capture |
+| A100 VMSS | BlobFuse `/data` | fuse `blobfuse2` | 0.489744 | 43.955 | Similar to the GPT-style 20 GiB H100 BlobFuse result |
+| H200 flex | BlobFuse `/data` | fuse `blobfuse2` | 0.354608 | 60.572 | Much slower than H200 host `/mnt` |
+| H100 flex | host `/mnt` | ext4 `/dev/sdb1` | 0.257685 | 83.338 | Slower than BlobFuse on this H100 host |
+| A100 VMSS | Standard SSD 1 TiB disk | ext4 `/dev/sdc` | 0.239423 | 89.694 | Current `managed-csi` class is not a fast hot checkpoint target |
+| A100 VMSS | Premium SSD 1 TiB disk | ext4 `/dev/sdd` | 0.199571 | 107.605 | Current `managed-csi-premium` class is not a fast hot checkpoint target |
+
+The fastest practical target observed so far is node-local `/mnt` on H200. It is
+not durable and not shared, so the safe pattern is checkpoint to local `/mnt`
+first, then upload/copy to Blob out-of-band. On H100 flex, the same host `/mnt`
+path was slower than BlobFuse in this capture, so it should not be assumed
+universally fast across all flex GPU node classes.
+
+Azure Disk could not be evaluated on the flex H100/H200 nodes with the current
+cluster integration. The flex nodes report provider IDs such as
+`azure-flex:///.../Microsoft.Compute/virtualMachines/flex-h100-*`, while the A100
+AKS pool reports VMSS IDs such as
+`azure:///.../virtualMachineScaleSets/aks-gpu-.../virtualMachines/0`. Azure Disk
+CSI attached successfully on the A100 VMSS node, but attach failed on flex H100
+with `could not get disk lun ... not a vmss instance`. The real Blob NFS v3 export
+also failed to mount from the H100 flex path with `access denied by server`.
+
+That means the current hot checkpoint choices are different by node class:
+
+- H200 flex: use local host `/mnt` as the hot checkpoint target, then copy to
+  Blob asynchronously for durability.
+- H100 flex: no faster mounted hot path was found; BlobFuse beat host `/mnt`, and
+  Azure Disk/Blob NFS need platform integration fixes before they can be used.
+- A100 VMSS: local host `/mnt` beat BlobFuse, but the current 1 TiB Standard and
+  Premium managed disk classes did not. A faster managed-disk option would need a
+  larger/faster tier, Premium SSD v2, Ultra Disk, or striping rather than the
+  current classes.
+
 ## Caveats
 
 - The staged targets are measured after copying the same sampled files from
