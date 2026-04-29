@@ -39,6 +39,32 @@ The voice/autoresearch benchmark found cold BlobFuse tiny-file reads around
 hundreds of files per second, while staged local reads were roughly five orders
 of magnitude faster. Loader tuning is not enough to close that gap.
 
+### Initial P0 read staging check
+
+Artifact on the cluster:
+
+```text
+/data/storage-benchmarks/rune-p0-a100-read-202604292340.{json,md}
+```
+
+This check sampled 3,000 files from `/data/autoresearch/results/gura`, totaling
+18,849,866 bytes, on the A100 VMSS pool.
+
+| Operation | Files/s | MB/s | Seconds |
+|---|---:|---:|---:|
+| Direct BlobFuse read | 184 | 1.156 | 16.300 |
+| Stage copy to `/mnt` | 2,071 | 13.014 | 1.448 |
+| Staged `/mnt` read | 46,271 | 290.731 | 0.065 |
+| Tar create from staged files | 4,659 | 37.404 | 0.644 |
+| Tar read from `/mnt` | 13,863 | 87.108 | 0.216 |
+
+The result supports the default: stage hot reads to `/mnt`, and prefer packed
+formats for repeated access. During this same P0 pass, H100 and H200 flex pods
+observed `/data/autoresearch/results/gura` as an existing directory with zero
+files, while A100 and a normal reader pod saw the expected 3,224 files. Treat
+that as a flex-node BlobFuse listing/visibility risk; Rune should fail loudly if
+the staged file count does not match the expected manifest.
+
 ## Checkpoint write default
 
 Use two-tier checkpointing: write locally first, then copy to Blob in the
@@ -53,6 +79,29 @@ background.
    confirmation.
 6. Resume from local only if the job is on the same node and the local checkpoint
    is complete and newer. Otherwise resume from Blob.
+
+### Initial P0 durable copy check
+
+Artifact on the cluster:
+
+```text
+/data/storage-benchmarks/rune-p0-h200-copy-202604292340.{json,md}
+```
+
+This check used H200 host `/mnt` and BlobFuse `/data`.
+
+| Metric | Bytes | Seconds | GB/s |
+|---|---:|---:|---:|
+| 2 GiB startup probe write to `/mnt` | 2,147,483,648 | 1.704 | 1.260559 |
+| 20 GiB local checkpoint write to `/mnt` | 21,474,836,480 | 18.792 | 1.142737 |
+| Python stream copy from `/mnt` to `/data` | 21,474,836,480 | 76.327 | 0.281352 |
+| `cp` plus fsync from `/mnt` to `/data` | 21,474,836,480 | 69.897 | 0.307236 |
+
+Local-hot checkpointing reduces foreground checkpoint latency on H200 from about
+a minute to under 20 seconds, but durable copy through BlobFuse still takes about
+70-76 seconds per 20 GiB checkpoint. Rune should therefore track an upload queue
+depth/lag metric and continue benchmarking direct Blob SDK or `azcopy` uploads
+before choosing the final durable uploader.
 
 ## Current node-class policy
 
