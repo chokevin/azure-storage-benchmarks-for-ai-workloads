@@ -1,0 +1,232 @@
+# Runs the GPT-style async checkpoint PyTorch sample once per GPU SKU.
+#
+# This assumes the voice-agent-flex-style cluster labels GPU nodes with
+# `gpu=a100`, `gpu=h100`, and `gpu=h200`, and uses the DRA ResourceClaimTemplate
+# `full-gpu` for one full GPU.
+#
+# For pre-merge branch testing, replace `main` in the raw GitHub URL below with
+# your branch name.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpt2-async-checkpoint-a100
+  namespace: ray
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: a100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: full-gpu
+      containers:
+        - name: trainer
+          image: pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+               set -euo pipefail
+               python -m pip install -q datasets
+               RUN_ID=gpt2-async-a100-$(date -u +%Y%m%d%H%M%S)
+               curl -fsSL https://raw.githubusercontent.com/chokevin/azure-storage-benchmarks-for-ai-workloads/main/examples/pytorch/gpt2_async_checkpoint.py -o /tmp/gpt2_async_checkpoint.py
+               python /tmp/gpt2_async_checkpoint.py \
+                 --run-id "$RUN_ID" \
+                 --checkpoint-dir "/data/storage-benchmarks/gpt2-async-checkpoints/a100/$RUN_ID" \
+                 --output-json "/data/storage-benchmarks/$RUN_ID.json" \
+                 --output-md "/data/storage-benchmarks/$RUN_ID.md" \
+                 --max-records 512 \
+                 --steps 30 \
+                 --checkpoint-every 10 \
+                 --seq-len 256 \
+                 --batch-size 16 \
+                 --layers 4 \
+                 --heads 4 \
+                 --embedding-dim 256 \
+                 --checkpoint-padding-mib 2048
+          env:
+            - name: HF_HOME
+              value: /scratch/huggingface
+            - name: HF_DATASETS_CACHE
+              value: /scratch/huggingface/datasets
+          resources:
+            claims:
+              - name: gpu
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "16"
+              memory: 64Gi
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: scratch
+          emptyDir: {}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpt2-async-checkpoint-h100
+  namespace: ray
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: full-gpu
+      containers:
+        - name: trainer
+          image: pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+               set -euo pipefail
+               python -m pip install -q datasets
+               RUN_ID=gpt2-async-h100-$(date -u +%Y%m%d%H%M%S)
+               curl -fsSL https://raw.githubusercontent.com/chokevin/azure-storage-benchmarks-for-ai-workloads/main/examples/pytorch/gpt2_async_checkpoint.py -o /tmp/gpt2_async_checkpoint.py
+               python /tmp/gpt2_async_checkpoint.py \
+                 --run-id "$RUN_ID" \
+                 --checkpoint-dir "/data/storage-benchmarks/gpt2-async-checkpoints/h100/$RUN_ID" \
+                 --output-json "/data/storage-benchmarks/$RUN_ID.json" \
+                 --output-md "/data/storage-benchmarks/$RUN_ID.md" \
+                 --max-records 512 \
+                 --steps 30 \
+                 --checkpoint-every 10 \
+                 --seq-len 256 \
+                 --batch-size 16 \
+                 --layers 4 \
+                 --heads 4 \
+                 --embedding-dim 256 \
+                 --checkpoint-padding-mib 2048
+          env:
+            - name: HF_HOME
+              value: /scratch/huggingface
+            - name: HF_DATASETS_CACHE
+              value: /scratch/huggingface/datasets
+          resources:
+            claims:
+              - name: gpu
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "16"
+              memory: 64Gi
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: scratch
+          emptyDir: {}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpt2-async-checkpoint-h200
+  namespace: ray
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h200
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      resourceClaims:
+        - name: gpu
+          resourceClaimTemplateName: full-gpu
+      containers:
+        - name: trainer
+          image: pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+               set -euo pipefail
+               python -m pip install -q datasets
+               RUN_ID=gpt2-async-h200-$(date -u +%Y%m%d%H%M%S)
+               curl -fsSL https://raw.githubusercontent.com/chokevin/azure-storage-benchmarks-for-ai-workloads/main/examples/pytorch/gpt2_async_checkpoint.py -o /tmp/gpt2_async_checkpoint.py
+               python /tmp/gpt2_async_checkpoint.py \
+                 --run-id "$RUN_ID" \
+                 --checkpoint-dir "/data/storage-benchmarks/gpt2-async-checkpoints/h200/$RUN_ID" \
+                 --output-json "/data/storage-benchmarks/$RUN_ID.json" \
+                 --output-md "/data/storage-benchmarks/$RUN_ID.md" \
+                 --max-records 512 \
+                 --steps 30 \
+                 --checkpoint-every 10 \
+                 --seq-len 256 \
+                 --batch-size 16 \
+                 --layers 4 \
+                 --heads 4 \
+                 --embedding-dim 256 \
+                 --checkpoint-padding-mib 2048
+          env:
+            - name: HF_HOME
+              value: /scratch/huggingface
+            - name: HF_DATASETS_CACHE
+              value: /scratch/huggingface/datasets
+          resources:
+            claims:
+              - name: gpu
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "16"
+              memory: 64Gi
+          volumeMounts:
+            - name: blob-training
+              mountPath: /data
+            - name: scratch
+              mountPath: /scratch
+      volumes:
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+        - name: scratch
+          emptyDir: {}

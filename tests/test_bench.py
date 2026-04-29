@@ -35,13 +35,14 @@ class BenchmarkTests(unittest.TestCase):
                 large_file_size_mib=1,
                 checkpoint_files=1,
                 checkpoint_size_mib=1,
+                async_checkpoint=True,
                 iterations=1,
                 run_id="unit",
             )
 
             report = run_benchmarks({"tmp": Path(tmp)}, config)
 
-        self.assertEqual(report["schema_version"], "3")
+        self.assertEqual(report["schema_version"], "4")
         self.assertEqual(report["results"][0]["name"], "tmp")
         self.assertIn("mount", report["results"][0])
         self.assertTrue(report["results"][0]["ok"], report["results"][0]["error"])
@@ -50,8 +51,12 @@ class BenchmarkTests(unittest.TestCase):
         self.assertGreater(report["results"][0]["metrics"]["large_read_first_gb_s"], 0)
         self.assertGreater(report["results"][0]["metrics"]["large_read_warm_gb_s"], 0)
         self.assertGreater(report["results"][0]["metrics"]["large_read_gbps"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["async_checkpoint_writer_gb_s"], 0)
+        self.assertGreater(report["results"][0]["metrics"]["async_checkpoint_blocked_ms"], 0)
         samples = report["results"][0]["raw"]["transfer_samples"]
         self.assertTrue(any(sample["operation"] == "large_read" for sample in samples))
+        self.assertTrue(any(sample["operation"] == "async_checkpoint_writer" for sample in samples))
+        self.assertTrue(any(sample["operation"] == "async_checkpoint_blocked" for sample in samples))
         self.assertTrue(all("gb_s" in sample for sample in samples))
 
     def test_write_json_and_render_markdown(self):
@@ -73,6 +78,10 @@ class BenchmarkTests(unittest.TestCase):
                             "large_read_warm_gb_s": 6.0,
                             "large_write_gb_s": 4.0,
                             "checkpoint_write_gb_s": 5.0,
+                            "async_checkpoint_submit_ms": 0.1,
+                            "async_checkpoint_wait_ms": 10.0,
+                            "async_checkpoint_blocked_gb_s": 7.0,
+                            "async_checkpoint_writer_gb_s": 4.5,
                         },
                         "raw": {
                             "transfer_samples": [
@@ -100,6 +109,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(loaded["run_id"], "unit")
         self.assertIn("| tmp | yes | tmpfs | tmpfs |", markdown)
         self.assertIn("Large read first GB/s", markdown)
+        self.assertIn("Async blocked GB/s", markdown)
         self.assertIn("Raw transfer samples", markdown)
         self.assertIn("| tmp | large_read | 1 | 1024 |", markdown)
 
