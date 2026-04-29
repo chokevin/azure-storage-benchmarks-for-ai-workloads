@@ -35,6 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--large-file-size-mib", type=int, default=256)
     run_parser.add_argument("--checkpoint-files", type=int, default=4)
     run_parser.add_argument("--checkpoint-size-mib", type=int, default=64)
+    run_parser.add_argument(
+        "--async-checkpoint",
+        action="store_true",
+        help="also run a checkpoint-like write in a background thread",
+    )
+    run_parser.add_argument(
+        "--async-checkpoint-overlap-ms",
+        type=int,
+        default=0,
+        help="milliseconds of simulated compute to overlap with async checkpoint writes",
+    )
     run_parser.add_argument("--iterations", type=int, default=3)
     run_parser.add_argument("--run-id", default=None)
     run_parser.add_argument("--keep-data", action="store_true")
@@ -69,6 +80,8 @@ def run_command(args: argparse.Namespace) -> int:
             large_file_size_mib=args.large_file_size_mib,
             checkpoint_files=args.checkpoint_files,
             checkpoint_size_mib=args.checkpoint_size_mib,
+            async_checkpoint=args.async_checkpoint,
+            async_checkpoint_overlap_ms=args.async_checkpoint_overlap_ms,
             iterations=args.iterations,
             run_id=args.run_id,
             keep_data=args.keep_data,
@@ -109,4 +122,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

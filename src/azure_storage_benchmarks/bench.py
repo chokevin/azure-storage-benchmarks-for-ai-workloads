@@ -8,6 +8,7 @@ import socket
 import statistics
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -26,6 +27,8 @@ class BenchmarkConfig:
     large_file_size_mib: int = 256
     checkpoint_files: int = 4
     checkpoint_size_mib: int = 64
+    async_checkpoint: bool = False
+    async_checkpoint_overlap_ms: int = 0
     iterations: int = 3
     run_id: str | None = None
     keep_data: bool = False
@@ -42,6 +45,11 @@ class BenchmarkConfig:
         for name, value in positive_ints.items():
             if value <= 0:
                 raise ValueError(f"{name} must be > 0, got {value}")
+        if self.async_checkpoint_overlap_ms < 0:
+            raise ValueError(
+                "async_checkpoint_overlap_ms must be >= 0, "
+                f"got {self.async_checkpoint_overlap_ms}"
+            )
 
 
 def parse_named_path(value: str) -> tuple[str, Path]:
@@ -63,7 +71,7 @@ def run_benchmarks(paths: dict[str, Path], config: BenchmarkConfig) -> dict:
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     results = {
-        "schema_version": "3",
+        "schema_version": "4",
         "run_id": run_id,
         "started_at": started_at,
         "host": {
@@ -77,6 +85,8 @@ def run_benchmarks(paths: dict[str, Path], config: BenchmarkConfig) -> dict:
             "large_file_size_mib": config.large_file_size_mib,
             "checkpoint_files": config.checkpoint_files,
             "checkpoint_size_mib": config.checkpoint_size_mib,
+            "async_checkpoint": config.async_checkpoint,
+            "async_checkpoint_overlap_ms": config.async_checkpoint_overlap_ms,
             "iterations": config.iterations,
             "keep_data": config.keep_data,
         },
@@ -113,9 +123,12 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
         small_dir = run_root / "small-files"
         large_dir = run_root / "large-files"
         checkpoint_dir = run_root / "checkpoint-like"
+        async_checkpoint_dir = run_root / "async-checkpoint-like"
         small_dir.mkdir()
         large_dir.mkdir()
         checkpoint_dir.mkdir()
+        if config.async_checkpoint:
+            async_checkpoint_dir.mkdir()
 
         raw = {}
         raw["small_write_seconds"] = _time_call(
@@ -149,6 +162,13 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
                 size_bytes=config.checkpoint_size_mib * MIB,
             )
         )
+        if config.async_checkpoint:
+            raw["async_checkpoint"] = _write_async_checkpoint_like(
+                async_checkpoint_dir,
+                files=config.checkpoint_files,
+                size_bytes=config.checkpoint_size_mib * MIB,
+                overlap_seconds=config.async_checkpoint_overlap_ms / 1000,
+            )
 
         small_total_bytes = config.small_files * config.small_file_size_kib * KIB
         large_total_bytes = config.large_file_size_mib * MIB
@@ -192,6 +212,22 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
                 seconds=raw["checkpoint_write_seconds"],
             ),
         ]
+        if config.async_checkpoint:
+            async_raw = raw["async_checkpoint"]
+            raw["transfer_samples"].extend(
+                [
+                    _transfer_sample(
+                        operation="async_checkpoint_writer",
+                        bytes_count=checkpoint_total_bytes,
+                        seconds=async_raw["writer_seconds"],
+                    ),
+                    _transfer_sample(
+                        operation="async_checkpoint_blocked",
+                        bytes_count=checkpoint_total_bytes,
+                        seconds=async_raw["caller_blocked_seconds"],
+                    ),
+                ]
+            )
 
         metrics = {
             "small_write_ms_per_file": _ms_per_item(raw["small_write_seconds"], config.small_files),
@@ -238,6 +274,22 @@ def run_one_path(name: str, base_path: Path, run_id: str, config: BenchmarkConfi
                 checkpoint_total_bytes, raw["checkpoint_write_seconds"]
             ),
         }
+        if config.async_checkpoint:
+            async_raw = raw["async_checkpoint"]
+            metrics.update(
+                {
+                    "async_checkpoint_submit_ms": async_raw["submit_seconds"] * 1000,
+                    "async_checkpoint_overlap_ms": async_raw["overlap_seconds"] * 1000,
+                    "async_checkpoint_wait_ms": async_raw["wait_seconds"] * 1000,
+                    "async_checkpoint_blocked_ms": async_raw["caller_blocked_seconds"] * 1000,
+                    "async_checkpoint_writer_gb_s": _gb_per_second(
+                        checkpoint_total_bytes, async_raw["writer_seconds"]
+                    ),
+                    "async_checkpoint_blocked_gb_s": _gb_per_second(
+                        checkpoint_total_bytes, async_raw["caller_blocked_seconds"]
+                    ),
+                }
+            )
 
         path_result["ok"] = True
         path_result["metrics"] = {k: round(v, 3) for k, v in metrics.items()}
@@ -264,14 +316,14 @@ def render_markdown(report: dict) -> str:
         f"- Started: `{report['started_at']}`",
         f"- Host: `{report['host']['hostname']}`",
         "",
-        "| Target | OK | FS type | Mount source | Small read first ms/file | Small read warm ms/file | List ms/1000 files | Large read first GB/s | Large read warm GB/s | Large write GB/s | Checkpoint write GB/s | Error |",
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Target | OK | FS type | Mount source | Small read first ms/file | Small read warm ms/file | List ms/1000 files | Large read first GB/s | Large read warm GB/s | Large write GB/s | Checkpoint write GB/s | Async submit ms | Async wait ms | Async blocked GB/s | Async writer GB/s | Error |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for result in report["results"]:
         metrics = result.get("metrics", {})
         mount = result.get("mount") or {}
         lines.append(
-            "| {name} | {ok} | {fs_type} | {source} | {small_read_first} | {small_read_warm} | {list_ms} | {large_read_first} | {large_read_warm} | {large_write} | {checkpoint_write} | {error} |".format(
+            "| {name} | {ok} | {fs_type} | {source} | {small_read_first} | {small_read_warm} | {list_ms} | {large_read_first} | {large_read_warm} | {large_write} | {checkpoint_write} | {async_submit} | {async_wait} | {async_blocked} | {async_writer} | {error} |".format(
                 name=result["name"],
                 ok="yes" if result["ok"] else "no",
                 fs_type=(mount.get("fs_type") or "").replace("|", "\\|"),
@@ -283,6 +335,10 @@ def render_markdown(report: dict) -> str:
                 large_read_warm=_fmt_metric(metrics.get("large_read_warm_gb_s")),
                 large_write=_fmt_metric(metrics.get("large_write_gb_s")),
                 checkpoint_write=_fmt_metric(metrics.get("checkpoint_write_gb_s")),
+                async_submit=_fmt_metric(metrics.get("async_checkpoint_submit_ms")),
+                async_wait=_fmt_metric(metrics.get("async_checkpoint_wait_ms")),
+                async_blocked=_fmt_metric(metrics.get("async_checkpoint_blocked_gb_s")),
+                async_writer=_fmt_metric(metrics.get("async_checkpoint_writer_gb_s")),
                 error=(result.get("error") or "").replace("|", "\\|"),
             )
         )
@@ -327,6 +383,34 @@ def _write_checkpoint_like(directory: Path, files: int, size_bytes: int) -> None
         final_path = directory / f"checkpoint-{index:03d}.bin"
         _write_file(tmp_path, size_bytes)
         os.replace(tmp_path, final_path)
+
+
+def _write_async_checkpoint_like(
+    directory: Path,
+    files: int,
+    size_bytes: int,
+    overlap_seconds: float,
+) -> dict:
+    submit_start = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _time_call,
+            lambda: _write_checkpoint_like(directory, files=files, size_bytes=size_bytes),
+        )
+        submit_seconds = time.perf_counter() - submit_start
+        if overlap_seconds > 0:
+            time.sleep(overlap_seconds)
+        wait_start = time.perf_counter()
+        writer_seconds = future.result()
+        wait_seconds = time.perf_counter() - wait_start
+
+    return {
+        "submit_seconds": submit_seconds,
+        "overlap_seconds": overlap_seconds,
+        "wait_seconds": wait_seconds,
+        "writer_seconds": writer_seconds,
+        "caller_blocked_seconds": submit_seconds + wait_seconds,
+    }
 
 
 def _write_file(path: Path, size_bytes: int, payload: bytes | None = None) -> None:

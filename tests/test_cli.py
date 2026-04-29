@@ -29,6 +29,7 @@ class CliTests(unittest.TestCase):
                     "1",
                     "--checkpoint-size-mib",
                     "1",
+                    "--async-checkpoint",
                     "--iterations",
                     "1",
                     "--run-id",
@@ -53,4 +54,3 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -88,6 +88,87 @@ not help this tiny-file read/open pattern. For this voice/autoresearch sample,
 the practical fix is to stage or pack the tiny files before heavy training or
 transcription loops.
 
+## Async checkpoint-style write comparison
+
+Artifact on the cluster:
+
+```text
+/data/storage-benchmarks/storage-bench-async-checkpoint-202604291920.{json,md}
+```
+
+This run used the benchmark's async checkpoint mode with:
+
+- 4 checkpoint files.
+- 256 MiB per checkpoint file.
+- 1 GiB total checkpoint payload.
+- 5 seconds of simulated training compute overlapped with the background writer.
+
+`Async writer GB/s` is the actual background write throughput. `Async wait ms`
+is how long the caller waited after the 5 second overlap window. `Async blocked
+GB/s` uses only submit time plus post-overlap wait time, so it can look much
+higher than physical storage throughput when the write is fully hidden behind
+compute.
+
+| Target | Sync checkpoint GB/s | Async writer GB/s | Async wait ms after 5s overlap | Async blocked GB/s | Interpretation |
+|---|---:|---:|---:|---:|---|
+| BlobFuse | 0.121 | 0.129 | 3,291 | 0.326 | 5 seconds of overlap hid part, but not all, of the write |
+| Blob NFS v3 | 0.243 | 0.245 | 0.021 | 1,934.973 | Writer finished inside the overlap window |
+| Standard Azure Disk | 0.144 | 0.143 | 2,487 | 0.432 | Disk writer exceeded the 5 second overlap window |
+| Premium Azure Disk | 0.163 | 0.164 | 1,551 | 0.692 | Faster than Standard Disk but still not fully hidden |
+| local `emptyDir` | 0.922 | 0.826 | 0.019 | 2,084.903 | Fully hidden inside the overlap window |
+
+For this checkpoint size, async checkpointing changes the question from "how
+fast can storage write 1 GiB?" to "does the write fit inside the available
+compute overlap window?" Local scratch and Blob NFS v3 fit inside this 5 second
+window in this run; BlobFuse and the tested Azure Disks still had visible
+post-overlap wait time.
+
+## GPT-style PyTorch async checkpoint sample by GPU SKU
+
+Artifacts on the cluster:
+
+```text
+/data/storage-benchmarks/gpt2-async-large-a100-20260429200040.{json,md}
+/data/storage-benchmarks/gpt2-async-large-h100-20260429200040.{json,md}
+/data/storage-benchmarks/gpt2-async-large-h200-20260429200040.{json,md}
+```
+
+This run used `examples/pytorch/gpt2_async_checkpoint.py`, a tiny byte-level
+GPT-style PyTorch language model trained on Hugging Face `roneneldan/TinyStories`
+text. The sample used:
+
+- 30 training steps.
+- 16 samples per batch.
+- 256 byte-token sequence length.
+- 4 transformer layers, 4 attention heads, 256 embedding dimensions.
+- 3 async checkpoints, one every 10 steps.
+- 2,048 MiB padding tensor per checkpoint to make checkpoint writes visible.
+- Checkpoints written to BlobFuse under `/data/storage-benchmarks`.
+
+The model itself is only 3,356,160 parameters, or about 13 MiB of FP32 parameter
+tensors. The large checkpoint size below is intentionally simulated with padding
+so the run exercises checkpoint I/O behavior without requiring a large model.
+
+| GPU SKU | Device | Checkpoint bytes each | Pure step tokens/s | Loop tokens/s incl. checkpoint waits | Median step s | Async writer GB/s | Async caller-blocked s | Sync final GB/s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| A100 | NVIDIA A100-SXM4-80GB | 2,187,816,968 | 164,392 | 4,561 | 0.011913 | 0.184579 | 35.391502 | 0.148870 |
+| H100 | NVIDIA H100 NVL | 2,187,816,968 | 345,391 | 8,200 | 0.005785 | 0.292561 | 22.341305 | 0.409877 |
+| H200 | NVIDIA H200 | 2,187,816,968 | 300,198 | 6,807 | 0.005264 | 0.250062 | 26.179885 | 0.224126 |
+
+`Pure step tokens/s` sums only the timed forward/backward/update steps. `Loop
+tokens/s` includes the whole loop, including waits for the prior async checkpoint
+before submitting the next checkpoint and the final drain at shutdown. That is
+why loop throughput mostly follows BlobFuse checkpoint write speed in this run:
+H100 had both the highest pure step throughput and the fastest BlobFuse
+checkpoint writes, while H200 had a slightly faster median step than H100 but
+slower total step time and slower checkpoint writes.
+
+This larger run replaced an earlier 256 MiB-padding sanity check whose ~309 MB
+checkpoints were too small to make a useful training/checkpoint overlap claim.
+The earlier numbers also reported a single `tokens/s` value that included
+checkpoint waits, which made GPU comparisons look contradictory when placed next
+to median step time.
+
 ## Caveats
 
 - The staged targets are measured after copying the same sampled files from
@@ -99,7 +180,13 @@ transcription loops.
 - BlobFuse warm-cache results depend on cache state, pod placement, and client
   behavior. Treat first-pass numbers as the safer signal for new jobs or cold
   nodes.
+- Async checkpoint blocked throughput is a caller-time metric, not physical
+  storage throughput. Always compare it with `Async writer GB/s` and the chosen
+  overlap window.
+- The GPT-style GPU-SKU sample uses Hugging Face data and a deliberately tiny
+  model with padding-inflated checkpoint files. It is useful for comparing
+  checkpoint overlap mechanics across GPU SKUs, not for claiming absolute GPT-2
+  training throughput.
 - The `training-nfs` PVC in this cluster is also a Blob CSI / BlobFuse mount to
   the same backing container, so it should not be interpreted as a real NFS
   comparison.
-

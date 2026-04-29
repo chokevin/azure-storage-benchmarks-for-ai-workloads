@@ -16,6 +16,7 @@ The benchmark CLI exercises patterns that commonly hurt AI jobs:
 | Small-file create/read/list | Tokenized datasets, manifests, eval outputs, metadata-heavy pipelines |
 | Large-file sequential read/write | Model weights, checkpoints, archives |
 | Checkpoint-like atomic writes | Write temp file, flush, rename into place |
+| Async checkpoint-like writes | Submit checkpoint writes to a background writer and measure caller-blocked time vs writer time |
 | Raw transfer samples | Per-iteration bytes, seconds, GB/s, GiB/s, and Gbps |
 | Mount identity | Filesystem type and mount source from `/proc/self/mountinfo` when available |
 | Markdown/JSON reporting | Easy comparison across mounts and clusters |
@@ -82,6 +83,12 @@ Additional examples:
   PVCs for Standard SSD and Premium SSD StorageClasses.
 - `examples/kubernetes/azure-blob-nfs-v3-job.yaml` mounts a real Azure Blob NFS
   v3 export. This requires storage account firewall/VNet setup before applying.
+- `examples/pytorch/gpt2_async_checkpoint.py` trains a tiny GPT-style PyTorch
+  model on Hugging Face text data and reports sync vs async checkpoint behavior,
+  separating pure training-step throughput from loop throughput that includes
+  checkpoint waits. `examples/kubernetes/gpt2-async-checkpoint-gpu-skus.yaml`
+  runs that sample once per GPU SKU label (`a100`, `h100`, `h200`) with 2 GiB
+  checkpoint padding on clusters with matching DRA GPU resource claims.
 
 ## CLI
 
@@ -95,6 +102,8 @@ azure-storage-benchmark run \
   --large-file-size-mib 1024 \
   --checkpoint-files 4 \
   --checkpoint-size-mib 256 \
+  --async-checkpoint \
+  --async-checkpoint-overlap-ms 1000 \
   --iterations 3 \
   --output-json /data-nfs/storage-benchmarks/results.json \
   --output-md /data-nfs/storage-benchmarks/results.md
@@ -117,6 +126,15 @@ The summary table separates **first read** from **warm read** throughput. First
 read is the closest signal this simple benchmark has for cold-ish storage access.
 Warm reads are often served from kernel page cache, FUSE cache, or a storage
 client cache and can look like local memory/disk instead of remote storage.
+
+When `--async-checkpoint` is set, the benchmark also writes a checkpoint-like
+payload in a background thread. `Async writer GB/s` is the actual background
+write throughput. `Async blocked GB/s` uses only the time the caller spent
+submitting the write plus waiting after the configured
+`--async-checkpoint-overlap-ms` compute window. If the writer finishes during
+that overlap window, blocked throughput can look much higher than physical
+storage throughput; that is the point of async checkpointing, but only if the
+training step has enough work to hide the write.
 
 Also check the `FS type` and `Mount source` columns. If two paths report the
 same filesystem type/source, you may be comparing two aliases for the same
