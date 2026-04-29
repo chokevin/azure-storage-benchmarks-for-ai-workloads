@@ -36,6 +36,10 @@ See [docs/storage-alternatives.md](docs/storage-alternatives.md) for a broader
 alternatives matrix, including Lustre-style filesystems, WEKA, MinIO, Ceph, and
 cache layers.
 
+See [docs/voice-agent-flex-results.md](docs/voice-agent-flex-results.md) for a
+real `voice-agent-flex` capture that profiles a voice/autoresearch small-file
+path and compares BlobFuse, Blob NFS v3, Azure Disk, and local scratch.
+
 ## Quick start: local smoke test
 
 ```bash
@@ -126,6 +130,7 @@ Prefer matching the storage to the workload:
 |---|---|
 | Durable source datasets and archives | Blob/ADLS |
 | Hot checkpoints, adapters, leaderboards, frequent renames | NFS/shared filesystem |
+| Many tiny cold files in a single-pod training or preprocessing loop | Stage to local scratch or Azure Disk |
 | Repeated read-only model/data access | NFS or a cache layer such as Alluxio |
 | Temporary preprocessing on one node | local NVMe/`emptyDir` |
 
