@@ -174,22 +174,28 @@ to median step time.
 Artifact on the cluster:
 
 ```text
+/data/storage-benchmarks/gpt2-async-20g-a100-20260429204054.{json,md}
 /data/storage-benchmarks/gpt2-async-20g-h100-20260429202505.{json,md}
+/data/storage-benchmarks/gpt2-async-20g-h200-20260429204054.{json,md}
 ```
 
-After the 2 GiB-padding GPU-SKU run, a single H100 probe used 20,480 MiB of
-checkpoint padding. This produced checkpoint files above 20 GB each while
-avoiding cross-SKU contention against the same BlobFuse mount.
+After the 2 GiB-padding GPU-SKU run, the same sample was run with 20,480 MiB of
+checkpoint padding. The A100 and H200 jobs were run sequentially after the H100
+probe to avoid deliberate cross-SKU contention against the same BlobFuse mount.
 
 | GPU SKU | Device | Checkpoint bytes each | Async checkpoint total GB | Pure step tokens/s | Loop tokens/s incl. checkpoint waits | Async writer GB/s | Async caller-blocked s | Sync final GB/s |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
+| A100 | NVIDIA A100-SXM4-80GB | 21,515,171,192 | 64.546 | 173,382 | 982 | 0.329044 | 196.174834 | 0.369199 |
 | H100 | NVIDIA H100 NVL | 21,515,171,192 | 64.546 | 345,706 | 1,380 | 0.483925 | 133.288581 | 0.492306 |
+| H200 | NVIDIA H200 | 21,515,171,192 | 64.546 | 299,068 | 892 | 0.307572 | 209.887191 | 0.322191 |
 
 The larger checkpoint writes behaved more like sustained sequential writes than
-the smaller 2 GiB-padding run. The async writer and sync final checkpoint were
-both around 0.49 GB/s on BlobFuse in this capture, but the caller still spent
-over two minutes blocked across three async checkpoints because the toy model's
-training steps are far too short to hide ~21.5 GB checkpoint writes.
+the smaller 2 GiB-padding run. H100 was the fastest BlobFuse writer in this
+capture, at roughly 0.48-0.49 GB/s for both async and sync writes. A100 and H200
+were slower on the same BlobFuse path, around 0.31-0.37 GB/s depending on async
+or sync timing. In all cases the caller still spent minutes blocked across three
+async checkpoints because the toy model's training steps are far too short to
+hide ~21.5 GB checkpoint writes.
 
 ## Caveats
 
