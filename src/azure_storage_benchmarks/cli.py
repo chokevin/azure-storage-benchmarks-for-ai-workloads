@@ -7,9 +7,13 @@ from pathlib import Path
 
 from .bench import (
     BenchmarkConfig,
+    DatasetReadConfig,
     parse_named_path,
+    render_dataset_read_markdown,
     render_markdown,
     run_benchmarks,
+    run_dataset_read_benchmarks,
+    write_dataset_read_markdown_report,
     write_json_report,
     write_markdown_report,
 )
@@ -63,6 +67,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(func=run_command)
 
+    dataset_parser = subparsers.add_parser(
+        "dataset-read",
+        help="read an existing dataset without modifying it",
+    )
+    dataset_parser.add_argument(
+        "--path",
+        action="append",
+        required=True,
+        metavar="NAME=PATH",
+        help="named existing dataset path to read, for example lustre=/lustre/training-data",
+    )
+    dataset_parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        help="maximum bytes to read per path; defaults to the full dataset",
+    )
+    dataset_parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help="number of files to read in parallel",
+    )
+    dataset_parser.add_argument(
+        "--block-size-mib",
+        type=int,
+        default=8,
+        help="read chunk size per worker",
+    )
+    dataset_parser.add_argument("--run-id", default=None)
+    dataset_parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=Path("dataset-read-benchmark-results.json"),
+        help="JSON report path",
+    )
+    dataset_parser.add_argument(
+        "--output-md",
+        type=Path,
+        default=None,
+        help="optional Markdown report path",
+    )
+    dataset_parser.set_defaults(func=dataset_read_command)
+
     summarize_parser = subparsers.add_parser("summarize", help="render Markdown from a JSON report")
     summarize_parser.add_argument("input_json", type=Path)
     summarize_parser.add_argument("--output-md", type=Path, default=None)
@@ -95,6 +143,31 @@ def run_command(args: argparse.Namespace) -> int:
     if args.output_md:
         write_markdown_report(report, args.output_md)
     print(render_markdown(report))
+    print(f"Wrote JSON report: {args.output_json}")
+    if args.output_md:
+        print(f"Wrote Markdown report: {args.output_md}")
+
+    return 0 if all(result["ok"] for result in report["results"]) else 1
+
+
+def dataset_read_command(args: argparse.Namespace) -> int:
+    try:
+        paths = dict(parse_named_path(value) for value in args.path)
+        config = DatasetReadConfig(
+            max_bytes=args.max_bytes,
+            concurrency=args.concurrency,
+            block_size_mib=args.block_size_mib,
+            run_id=args.run_id,
+        )
+        report = run_dataset_read_benchmarks(paths, config)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    write_json_report(report, args.output_json)
+    if args.output_md:
+        write_dataset_read_markdown_report(report, args.output_md)
+    print(render_dataset_read_markdown(report))
     print(f"Wrote JSON report: {args.output_json}")
     if args.output_md:
         print(f"Wrote Markdown report: {args.output_md}")

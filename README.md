@@ -88,6 +88,9 @@ Additional examples:
   PVCs for Standard SSD and Premium SSD StorageClasses.
 - `examples/kubernetes/azure-blob-nfs-v3-job.yaml` mounts a real Azure Blob NFS
   v3 export. This requires storage account firewall/VNet setup before applying.
+- `examples/kubernetes/lustre-training-data-read-job.yaml` runs read-only
+  Lustre CSI dataset scans for 1 TiB, 5 TiB, 10 TiB, and 50 TiB training-data
+  tiers on `voice-agent-flex`-style clusters.
 - `examples/pytorch/gpt2_async_checkpoint.py` trains a tiny GPT-style PyTorch
   model on Hugging Face text data and reports sync vs async checkpoint behavior,
   separating pure training-step throughput from loop throughput that includes
@@ -113,6 +116,28 @@ azure-storage-benchmark run \
   --output-json /data-nfs/storage-benchmarks/results.json \
   --output-md /data-nfs/storage-benchmarks/results.md
 ```
+
+For existing training datasets, use the read-only `dataset-read` command. It
+recursively enumerates files in deterministic path order, reads with bounded
+parallelism, and reports enumeration time separately from read throughput:
+
+```bash
+azure-storage-benchmark dataset-read \
+  --path lustre=/lustre/training-data/1tib \
+  --max-bytes 1099511627776 \
+  --concurrency 16 \
+  --block-size-mib 16 \
+  --run-id lustre-training-data-read-1tib \
+  --output-json /data/storage-benchmarks/lustre-training-data-read-1tib.json \
+  --output-md /data/storage-benchmarks/lustre-training-data-read-1tib.md
+```
+
+`--max-bytes` is a per-path cap. The command may stop partway through the final
+file to hit that cap; the JSON records selected files and `bytes_to_read` for
+reproducibility. For Lustre mounts, the report also captures `lfs df -h` and
+`lfs getstripe` output when the `lfs` client tool is available in the image.
+On multi-network GPU clusters, pin Lustre jobs to nodes that can actually route
+to the Lustre MGS instead of relying on a broad GPU label.
 
 Use `--keep-data` if you want to inspect the generated files. Otherwise the CLI
 deletes its per-run directory after each path completes.

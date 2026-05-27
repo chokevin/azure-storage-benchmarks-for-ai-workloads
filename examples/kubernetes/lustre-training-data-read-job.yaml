@@ -1,0 +1,281 @@
+# Reads existing training-data directories from the Lustre CSI mount on
+# voice-agent-flex. Edit `claimName` and DATASET_ROOT if your PVC or directory
+# layout differs.
+#
+# The jobs are intentionally read-only: results are written to the existing
+# Blob-backed `/data/storage-benchmarks` output path, not to Lustre.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lustre-training-data-benchmark
+  namespace: ray
+data:
+  dataset-root: /lustre/training-data
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lustre-training-data-read-1tib
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 21600
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=lustre-training-data-read-1tib-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark dataset-read \
+                --path "lustre=${DATASET_ROOT}/1tib" \
+                --max-bytes 1099511627776 \
+                --concurrency 16 \
+                --block-size-mib 16 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-training-data-benchmark
+                  key: dataset-root
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+            limits:
+              cpu: "32"
+              memory: 64Gi
+          volumeMounts:
+            - name: lustre-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: lustre-training-data
+          persistentVolumeClaim:
+            claimName: lustre-training-data
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lustre-training-data-read-5tib
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=lustre-training-data-read-5tib-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark dataset-read \
+                --path "lustre=${DATASET_ROOT}/5tib" \
+                --max-bytes 5497558138880 \
+                --concurrency 16 \
+                --block-size-mib 16 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-training-data-benchmark
+                  key: dataset-root
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+            limits:
+              cpu: "32"
+              memory: 64Gi
+          volumeMounts:
+            - name: lustre-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: lustre-training-data
+          persistentVolumeClaim:
+            claimName: lustre-training-data
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lustre-training-data-read-10tib
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=lustre-training-data-read-10tib-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark dataset-read \
+                --path "lustre=${DATASET_ROOT}/10tib" \
+                --max-bytes 10995116277760 \
+                --concurrency 16 \
+                --block-size-mib 16 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-training-data-benchmark
+                  key: dataset-root
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+            limits:
+              cpu: "32"
+              memory: 64Gi
+          volumeMounts:
+            - name: lustre-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: lustre-training-data
+          persistentVolumeClaim:
+            claimName: lustre-training-data
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lustre-training-data-read-50tib
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 259200
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        gpu: h100
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=lustre-training-data-read-50tib-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark dataset-read \
+                --path "lustre=${DATASET_ROOT}/50tib" \
+                --max-bytes 54975581388800 \
+                --concurrency 16 \
+                --block-size-mib 16 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: lustre-training-data-benchmark
+                  key: dataset-root
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+            limits:
+              cpu: "32"
+              memory: 64Gi
+          volumeMounts:
+            - name: lustre-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: lustre-training-data
+          persistentVolumeClaim:
+            claimName: lustre-training-data
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training

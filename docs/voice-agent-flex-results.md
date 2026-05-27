@@ -88,6 +88,44 @@ not help this tiny-file read/open pattern. For this voice/autoresearch sample,
 the practical fix is to stage or pack the tiny files before heavy training or
 transcription loops.
 
+## Lustre CSI training-data read plan
+
+Lustre was the remaining backend not captured in the earlier `voice-agent-flex`
+storage runs. With the Lustre CSI driver now mounted, use the read-only dataset
+benchmark instead of the generated read/write harness so the run measures the
+actual training-data layout and does not write benchmark payloads into Lustre.
+
+Example manifest:
+
+```bash
+kubectl apply -f examples/kubernetes/lustre-training-data-read-job.yaml
+```
+
+Before applying, edit the manifest if needed:
+
+- `claimName: lustre-training-data` should match the Lustre CSI PVC.
+- `dataset-root: /lustre/training-data` should contain `1tib`, `5tib`,
+  `10tib`, and `50tib` directories, or the job paths should be adjusted to the
+  real dataset directories.
+- The default jobs target `gpu: h100` nodes with `concurrency=16` and
+  `block-size-mib=16`. Increase concurrency only if the pod has enough CPU and
+  the Lustre server/client network can absorb the extra read pressure.
+- On the live `lustre-h200-training` PVC, the mount succeeded on
+  `flex-h200-eastus2euap-c8r87` but failed on `flex-h200-nxft5` with a Lustre
+  MGS input/output error. If you use that PVC, pin to a verified node or update
+  node placement after confirming the Lustre endpoint is routable from the node.
+
+The four jobs write Markdown and JSON reports to:
+
+```text
+/data/storage-benchmarks/lustre-training-data-read-{1tib,5tib,10tib,50tib}-*.{json,md}
+```
+
+The benchmark reports both enumeration time and read time. Use read-time GB/s as
+the storage throughput signal; use wall time when planning end-to-end training
+startup or epoch scan cost. Multi-iteration runs are intentionally avoided here
+because later passes may be served from page cache instead of Lustre.
+
 ## Async checkpoint-style write comparison
 
 Artifact on the cluster:

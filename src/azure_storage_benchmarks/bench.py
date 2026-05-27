@@ -6,6 +6,7 @@ import platform
 import shutil
 import socket
 import statistics
+import subprocess
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -52,6 +53,22 @@ class BenchmarkConfig:
             )
 
 
+@dataclass(frozen=True)
+class DatasetReadConfig:
+    max_bytes: int | None = None
+    concurrency: int = 8
+    block_size_mib: int = 8
+    run_id: str | None = None
+
+    def validate(self) -> None:
+        if self.max_bytes is not None and self.max_bytes <= 0:
+            raise ValueError(f"max_bytes must be > 0, got {self.max_bytes}")
+        if self.concurrency <= 0:
+            raise ValueError(f"concurrency must be > 0, got {self.concurrency}")
+        if self.block_size_mib <= 0:
+            raise ValueError(f"block_size_mib must be > 0, got {self.block_size_mib}")
+
+
 def parse_named_path(value: str) -> tuple[str, Path]:
     if "=" not in value:
         raise ValueError(f"path must be NAME=/mount/path, got {value!r}")
@@ -63,6 +80,108 @@ def parse_named_path(value: str) -> tuple[str, Path]:
     if not raw_path:
         raise ValueError(f"path value is empty in {value!r}")
     return name, Path(raw_path)
+
+
+def run_dataset_read_benchmarks(paths: dict[str, Path], config: DatasetReadConfig) -> dict:
+    config.validate()
+    run_id = config.run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    results = {
+        "schema_version": "1",
+        "run_id": run_id,
+        "started_at": started_at,
+        "host": {
+            "hostname": socket.gethostname(),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+        },
+        "config": {
+            "max_bytes": config.max_bytes,
+            "concurrency": config.concurrency,
+            "block_size_mib": config.block_size_mib,
+        },
+        "results": [],
+    }
+
+    for name, base_path in paths.items():
+        results["results"].append(run_one_dataset_read_path(name, base_path, config))
+
+    return results
+
+
+def run_one_dataset_read_path(name: str, base_path: Path, config: DatasetReadConfig) -> dict:
+    path_result = {
+        "name": name,
+        "path": str(base_path),
+        "mount": _mount_info_for(base_path),
+        "lustre": _lustre_info_for(base_path),
+        "ok": False,
+        "metrics": {},
+        "raw": {},
+        "error": "",
+    }
+
+    if not base_path.exists():
+        path_result["error"] = "path does not exist"
+        return path_result
+    if not base_path.is_dir():
+        path_result["error"] = "path is not a directory"
+        return path_result
+
+    try:
+        enumerate_start = time.perf_counter()
+        selected_files = _select_dataset_files(base_path, config.max_bytes)
+        enumerate_seconds = time.perf_counter() - enumerate_start
+        read_start = time.perf_counter()
+        read_results = _read_dataset_files(
+            selected_files,
+            concurrency=config.concurrency,
+            block_size_bytes=config.block_size_mib * MIB,
+        )
+        read_seconds = time.perf_counter() - read_start
+        bytes_read = sum(result["bytes_read"] for result in read_results)
+        files_read = sum(1 for result in read_results if result["bytes_read"] > 0)
+        files_fully_read = sum(1 for result in read_results if result["fully_read"])
+        wall_seconds = enumerate_seconds + read_seconds
+        sizes = [file_info["size"] for file_info in selected_files]
+
+        path_result["ok"] = True
+        path_result["metrics"] = {
+            "enumerate_seconds": round(enumerate_seconds, 3),
+            "read_seconds": round(read_seconds, 3),
+            "wall_seconds": round(wall_seconds, 3),
+            "files_selected": len(selected_files),
+            "files_read": files_read,
+            "files_fully_read": files_fully_read,
+            "bytes_read": bytes_read,
+            "read_gb_s": round(_gb_per_second(bytes_read, read_seconds), 3),
+            "read_gib_s": round(_gib_per_second(bytes_read, read_seconds), 3),
+            "read_gbps": round(_gbps(bytes_read, read_seconds), 3),
+        }
+        path_result["raw"] = {
+            "selected_bytes": sum(sizes),
+            "size_histogram": _size_histogram(sizes),
+            "selected_files": [
+                {
+                    "path": str(file_info["path"].relative_to(base_path)),
+                    "size": file_info["size"],
+                    "bytes_to_read": file_info["bytes_to_read"],
+                }
+                for file_info in selected_files
+            ],
+            "transfer_samples": [
+                _transfer_sample(
+                    operation="dataset_read",
+                    bytes_count=bytes_read,
+                    seconds=read_seconds,
+                )
+            ],
+        }
+        return path_result
+    except Exception as exc:  # noqa: BLE001 - surface per-path failures in JSON report.
+        path_result["error"] = f"{type(exc).__name__}: {exc}"
+        return path_result
 
 
 def run_benchmarks(paths: dict[str, Path], config: BenchmarkConfig) -> dict:
@@ -308,6 +427,49 @@ def write_json_report(report: dict, path: Path) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def render_dataset_read_markdown(report: dict) -> str:
+    lines = [
+        "# Dataset Read Benchmark Results",
+        "",
+        f"- Run ID: `{report['run_id']}`",
+        f"- Started: `{report['started_at']}`",
+        f"- Host: `{report['host']['hostname']}`",
+        f"- Max bytes: `{report['config'].get('max_bytes') or 'all'}`",
+        f"- Concurrency: `{report['config']['concurrency']}`",
+        f"- Block size MiB: `{report['config']['block_size_mib']}`",
+        "",
+        "| Target | OK | FS type | Mount source | Files read | Files fully read | Bytes read | Enumerate s | Read s | Wall s | Read GB/s | Read GiB/s | Read Gbps | Error |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    for result in report["results"]:
+        metrics = result.get("metrics", {})
+        mount = result.get("mount") or {}
+        lines.append(
+            "| {name} | {ok} | {fs_type} | {source} | {files_read} | {files_full} | {bytes_read} | {enum_s} | {read_s} | {wall_s} | {read_gb_s} | {read_gib_s} | {read_gbps} | {error} |".format(
+                name=result["name"],
+                ok="yes" if result["ok"] else "no",
+                fs_type=(mount.get("fs_type") or "").replace("|", "\\|"),
+                source=(mount.get("source") or "").replace("|", "\\|"),
+                files_read=metrics.get("files_read", ""),
+                files_full=metrics.get("files_fully_read", ""),
+                bytes_read=metrics.get("bytes_read", ""),
+                enum_s=_fmt_metric(metrics.get("enumerate_seconds")),
+                read_s=_fmt_metric(metrics.get("read_seconds")),
+                wall_s=_fmt_metric(metrics.get("wall_seconds")),
+                read_gb_s=_fmt_metric(metrics.get("read_gb_s")),
+                read_gib_s=_fmt_metric(metrics.get("read_gib_s")),
+                read_gbps=_fmt_metric(metrics.get("read_gbps")),
+                error=(result.get("error") or "").replace("|", "\\|"),
+            )
+        )
+    lines.append("")
+    lines.append("Throughput is computed from read time only; wall time includes deterministic file enumeration.")
+    lines.append("")
+    lines.extend(_render_dataset_read_details(report))
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_markdown(report: dict) -> str:
     lines = [
         "# Storage Benchmark Results",
@@ -353,6 +515,11 @@ def render_markdown(report: dict) -> str:
 def write_markdown_report(report: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_markdown(report), encoding="utf-8")
+
+
+def write_dataset_read_markdown_report(report: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_dataset_read_markdown(report), encoding="utf-8")
 
 
 def _fmt_metric(value: float | None) -> str:
@@ -437,6 +604,58 @@ def _read_files(paths: Iterable[Path]) -> int:
     return total
 
 
+def _select_dataset_files(base_path: Path, max_bytes: int | None) -> list[dict]:
+    selected = []
+    remaining = max_bytes
+    for path in sorted((entry for entry in base_path.rglob("*") if entry.is_file()), key=str):
+        size = path.stat().st_size
+        if size == 0:
+            continue
+        bytes_to_read = size if remaining is None else min(size, remaining)
+        if bytes_to_read <= 0:
+            break
+        selected.append({"path": path, "size": size, "bytes_to_read": bytes_to_read})
+        if remaining is not None:
+            remaining -= bytes_to_read
+            if remaining <= 0:
+                break
+    return selected
+
+
+def _read_dataset_files(
+    selected_files: list[dict],
+    concurrency: int,
+    block_size_bytes: int,
+) -> list[dict]:
+    if not selected_files:
+        return []
+    workers = min(concurrency, len(selected_files))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(
+            executor.map(
+                lambda file_info: _read_dataset_file(file_info, block_size_bytes),
+                selected_files,
+            )
+        )
+
+
+def _read_dataset_file(file_info: dict, block_size_bytes: int) -> dict:
+    bytes_remaining = file_info["bytes_to_read"]
+    bytes_read = 0
+    with file_info["path"].open("rb") as handle:
+        while bytes_remaining:
+            chunk = handle.read(min(block_size_bytes, bytes_remaining))
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            bytes_remaining -= len(chunk)
+    return {
+        "path": str(file_info["path"]),
+        "bytes_read": bytes_read,
+        "fully_read": bytes_read == file_info["size"],
+    }
+
+
 def _list_files(directory: Path, expected: int) -> None:
     entries = list(directory.iterdir())
     if len(entries) != expected:
@@ -447,6 +666,46 @@ def _payload(size_bytes: int) -> bytes:
     pattern = b"azure-storage-benchmark\n"
     repeats, remainder = divmod(size_bytes, len(pattern))
     return pattern * repeats + pattern[:remainder]
+
+
+def _size_histogram(sizes: list[int]) -> dict:
+    buckets = {
+        "0_64k": 0,
+        "64k_1m": 0,
+        "1m_64m": 0,
+        "64m_1g": 0,
+        "1g_plus": 0,
+    }
+    for size in sizes:
+        if size < 64 * KIB:
+            buckets["0_64k"] += 1
+        elif size < MIB:
+            buckets["64k_1m"] += 1
+        elif size < 64 * MIB:
+            buckets["1m_64m"] += 1
+        elif size < GIB:
+            buckets["64m_1g"] += 1
+        else:
+            buckets["1g_plus"] += 1
+    return buckets
+
+
+def _lustre_info_for(path: Path) -> dict:
+    if shutil.which("lfs") is None:
+        return {}
+    return {
+        "df": _run_lustre_command(["lfs", "df", "-h", str(path)]),
+        "getstripe": _run_lustre_command(["lfs", "getstripe", str(path)]),
+    }
+
+
+def _run_lustre_command(command: list[str]) -> dict:
+    completed = subprocess.run(command, check=False, text=True, capture_output=True)
+    return {
+        "returncode": completed.returncode,
+        "stdout": completed.stdout.strip(),
+        "stderr": completed.stderr.strip(),
+    }
 
 
 def _ms_per_item(seconds: float, items: int) -> float:
@@ -576,4 +835,28 @@ def _render_transfer_samples(report: dict) -> list[str]:
                     gbps=sample["gbps"],
                 )
             )
+    return lines
+
+
+def _render_dataset_read_details(report: dict) -> list[str]:
+    lines = [
+        "## Dataset details",
+        "",
+        "| Target | Selected bytes | <64 KiB files | 64 KiB-1 MiB files | 1-64 MiB files | 64 MiB-1 GiB files | >=1 GiB files |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for result in report["results"]:
+        raw = result.get("raw", {})
+        histogram = raw.get("size_histogram", {})
+        lines.append(
+            "| {target} | {selected_bytes} | {lt64k} | {lt1m} | {lt64m} | {lt1g} | {gte1g} |".format(
+                target=result["name"],
+                selected_bytes=raw.get("selected_bytes", ""),
+                lt64k=histogram.get("0_64k", ""),
+                lt1m=histogram.get("64k_1m", ""),
+                lt64m=histogram.get("1m_64m", ""),
+                lt1g=histogram.get("64m_1g", ""),
+                gte1g=histogram.get("1g_plus", ""),
+            )
+        )
     return lines

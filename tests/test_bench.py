@@ -5,9 +5,12 @@ from pathlib import Path
 
 from azure_storage_benchmarks.bench import (
     BenchmarkConfig,
+    DatasetReadConfig,
     parse_named_path,
+    render_dataset_read_markdown,
     render_markdown,
     run_benchmarks,
+    run_dataset_read_benchmarks,
     write_json_report,
 )
 
@@ -58,6 +61,87 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(any(sample["operation"] == "async_checkpoint_writer" for sample in samples))
         self.assertTrue(any(sample["operation"] == "async_checkpoint_blocked" for sample in samples))
         self.assertTrue(all("gb_s" in sample for sample in samples))
+
+    def test_run_dataset_read_benchmarks_caps_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "b.bin").write_bytes(b"b" * 8)
+            (root / "a.bin").write_bytes(b"a" * 8)
+            config = DatasetReadConfig(max_bytes=12, concurrency=2, block_size_mib=1, run_id="dataset")
+
+            report = run_dataset_read_benchmarks({"tmp": root}, config)
+
+        result = report["results"][0]
+        self.assertTrue(result["ok"], result["error"])
+        self.assertEqual(report["schema_version"], "1")
+        self.assertEqual(result["metrics"]["bytes_read"], 12)
+        self.assertEqual(result["metrics"]["files_read"], 2)
+        self.assertEqual(result["metrics"]["files_fully_read"], 1)
+        self.assertEqual(
+            [entry["path"] for entry in result["raw"]["selected_files"]],
+            ["a.bin", "b.bin"],
+        )
+        self.assertEqual(
+            [entry["bytes_to_read"] for entry in result["raw"]["selected_files"]],
+            [8, 4],
+        )
+        self.assertGreater(result["raw"]["transfer_samples"][0]["gb_s"], 0)
+
+    def test_run_dataset_read_benchmarks_allows_empty_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = DatasetReadConfig(max_bytes=None, concurrency=4, block_size_mib=1, run_id="empty")
+
+            report = run_dataset_read_benchmarks({"tmp": Path(tmp)}, config)
+
+        result = report["results"][0]
+        self.assertTrue(result["ok"], result["error"])
+        self.assertEqual(result["metrics"]["bytes_read"], 0)
+        self.assertEqual(result["metrics"]["files_read"], 0)
+        self.assertEqual(result["metrics"]["read_gb_s"], 0.0)
+        self.assertEqual(result["raw"]["selected_files"], [])
+
+    def test_render_dataset_read_markdown(self):
+        report = {
+            "run_id": "dataset",
+            "started_at": "2026-01-01T00:00:00Z",
+            "host": {"hostname": "test"},
+            "config": {"max_bytes": 1024, "concurrency": 4, "block_size_mib": 8},
+            "results": [
+                {
+                    "name": "lustre",
+                    "ok": True,
+                    "mount": {"fs_type": "lustre", "source": "10.0.0.1@tcp:/fs"},
+                    "metrics": {
+                        "files_read": 2,
+                        "files_fully_read": 2,
+                        "bytes_read": 1024,
+                        "enumerate_seconds": 0.1,
+                        "read_seconds": 0.2,
+                        "wall_seconds": 0.3,
+                        "read_gb_s": 0.001,
+                        "read_gib_s": 0.001,
+                        "read_gbps": 0.008,
+                    },
+                    "raw": {
+                        "selected_bytes": 1024,
+                        "size_histogram": {
+                            "0_64k": 2,
+                            "64k_1m": 0,
+                            "1m_64m": 0,
+                            "64m_1g": 0,
+                            "1g_plus": 0,
+                        },
+                    },
+                    "error": "",
+                }
+            ],
+        }
+
+        markdown = render_dataset_read_markdown(report)
+
+        self.assertIn("Dataset Read Benchmark Results", markdown)
+        self.assertIn("| lustre | yes | lustre | 10.0.0.1@tcp:/fs |", markdown)
+        self.assertIn("Dataset details", markdown)
 
     def test_write_json_and_render_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:
