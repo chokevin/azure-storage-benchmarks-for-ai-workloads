@@ -91,6 +91,9 @@ Additional examples:
 - `examples/kubernetes/lustre-training-data-read-job.yaml` runs read-only
   Lustre CSI dataset scans for 1 TiB, 5 TiB, 10 TiB, and 50 TiB training-data
   tiers on `voice-agent-flex`-style clusters.
+- `examples/kubernetes/amlfs-elastic-validation-job.yaml` validates the AMLFS
+  mount and HSM observability across specific flex nodes before relying on an
+  elastic GPU label.
 - `examples/pytorch/gpt2_async_checkpoint.py` trains a tiny GPT-style PyTorch
   model on Hugging Face text data and reports sync vs async checkpoint behavior,
   separating pure training-step throughput from loop throughput that includes
@@ -138,6 +141,22 @@ reproducibility. For Lustre mounts, the report also captures `lfs df -h` and
 `lfs getstripe` output when the `lfs` client tool is available in the image.
 On multi-network GPU clusters, pin Lustre jobs to nodes that can actually route
 to the Lustre MGS instead of relying on a broad GPU label.
+
+For AMLFS designs that depend on HSM tiering and elastic node reallocation, run
+the lighter validation probe before the full read:
+
+```bash
+azure-storage-benchmark amlfs-validate \
+  --path amlfs=/lustre \
+  --sample-files 1000 \
+  --output-json /data/storage-benchmarks/amlfs-validation.json \
+  --output-md /data/storage-benchmarks/amlfs-validation.md
+```
+
+This records mount identity, sampled dataset shape, and whether `lfs hsm_state`
+is available from the pod image. Use an image with Lustre client tools for HSM
+state validation; otherwise the report will explicitly mark HSM commands as
+unavailable.
 
 Use `--keep-data` if you want to inspect the generated files. Otherwise the CLI
 deletes its per-run directory after each path completes.

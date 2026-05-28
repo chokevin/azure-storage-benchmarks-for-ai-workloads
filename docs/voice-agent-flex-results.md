@@ -126,6 +126,43 @@ the storage throughput signal; use wall time when planning end-to-end training
 startup or epoch scan cost. Multi-iteration runs are intentionally avoided here
 because later passes may be served from page cache instead of Lustre.
 
+### AMLFS strategy validation gaps
+
+The target storage strategy is Azure Managed Lustre Filesystem (AMLFS) for an
+active 50-150 TB training dataset, with Blob sync through HSM tiering, under an
+elastic GPU reallocation model. The dataset-read benchmark validates the read
+path only after a pod has mounted AMLFS. It is not sufficient by itself for that
+strategy.
+
+Before claiming the strategy holds, validate:
+
+- **Dataset scale:** the mounted AMLFS path actually contains the intended
+  50-150 TB active dataset. A live `/lustre` probe on 2026-05-27 selected only
+  433,475,177,051 bytes, so a 50 TiB cap completed after reading all available
+  data rather than proving a 50 TiB dataset scan.
+- **Elastic placement:** every node class that can receive the training workload
+  can mount the same AMLFS endpoint. The `amlfs-elastic-validation-job.yaml`
+  example pins one validation job per candidate flex H200 node so mount failures
+  are visible.
+- **HSM/Blob tiering:** the pod image must include Lustre client tools. The
+  `python:3.12-slim` image used by the simple examples does not include `lfs`,
+  so it can validate mount/read behavior but not `lfs hsm_state` or archive
+  state. Use `azure-storage-benchmark amlfs-validate` with a Lustre-capable image
+  to capture HSM state signals.
+
+Live AMLFS validation on 2026-05-27:
+
+- `lustre-read-{1,5,10,50}tib-live` all completed on
+  `flex-h200-eastus2euap-c8r87`, but each cap read the same available 433 GB
+  dataset rather than distinct 1/5/10/50 TiB datasets.
+- `amlfs-validate-h200-c8r87` completed and sampled 1,000 files totaling
+  413,283,828,424 bytes. The mount source was `10.247.2.5@tcp:/lustrefs`.
+- `amlfs-validate-h200-nxft5` and `amlfs-validate-h200-vhkcm` failed to mount the
+  same PVC with `mount.lustre ... Input/output error; Is the MGS running?`.
+- `amlfs-validate-h200-glzff` mounted and started but was still running during
+  the capture window.
+- HSM state remains unvalidated because the runtime image lacked `lfs`.
+
 ## Async checkpoint-style write comparison
 
 Artifact on the cluster:

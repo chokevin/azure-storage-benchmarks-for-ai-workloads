@@ -6,13 +6,17 @@ import sys
 from pathlib import Path
 
 from .bench import (
+    AmlfsValidationConfig,
     BenchmarkConfig,
     DatasetReadConfig,
     parse_named_path,
+    render_amlfs_validation_markdown,
     render_dataset_read_markdown,
     render_markdown,
+    run_amlfs_validation,
     run_benchmarks,
     run_dataset_read_benchmarks,
+    write_amlfs_validation_markdown_report,
     write_dataset_read_markdown_report,
     write_json_report,
     write_markdown_report,
@@ -111,6 +115,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dataset_parser.set_defaults(func=dataset_read_command)
 
+    amlfs_parser = subparsers.add_parser(
+        "amlfs-validate",
+        help="validate AMLFS mount, sample dataset shape, and HSM observability",
+    )
+    amlfs_parser.add_argument(
+        "--path",
+        action="append",
+        required=True,
+        metavar="NAME=PATH",
+        help="named AMLFS dataset path to validate, for example amlfs=/lustre",
+    )
+    amlfs_parser.add_argument(
+        "--sample-files",
+        type=int,
+        default=1000,
+        help="number of deterministic files to sample for dataset shape and HSM state",
+    )
+    amlfs_parser.add_argument("--run-id", default=None)
+    amlfs_parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=Path("amlfs-validation-results.json"),
+        help="JSON report path",
+    )
+    amlfs_parser.add_argument(
+        "--output-md",
+        type=Path,
+        default=None,
+        help="optional Markdown report path",
+    )
+    amlfs_parser.set_defaults(func=amlfs_validate_command)
+
     summarize_parser = subparsers.add_parser("summarize", help="render Markdown from a JSON report")
     summarize_parser.add_argument("input_json", type=Path)
     summarize_parser.add_argument("--output-md", type=Path, default=None)
@@ -168,6 +204,29 @@ def dataset_read_command(args: argparse.Namespace) -> int:
     if args.output_md:
         write_dataset_read_markdown_report(report, args.output_md)
     print(render_dataset_read_markdown(report))
+    print(f"Wrote JSON report: {args.output_json}")
+    if args.output_md:
+        print(f"Wrote Markdown report: {args.output_md}")
+
+    return 0 if all(result["ok"] for result in report["results"]) else 1
+
+
+def amlfs_validate_command(args: argparse.Namespace) -> int:
+    try:
+        paths = dict(parse_named_path(value) for value in args.path)
+        config = AmlfsValidationConfig(
+            sample_files=args.sample_files,
+            run_id=args.run_id,
+        )
+        report = run_amlfs_validation(paths, config)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    write_json_report(report, args.output_json)
+    if args.output_md:
+        write_amlfs_validation_markdown_report(report, args.output_md)
+    print(render_amlfs_validation_markdown(report))
     print(f"Wrote JSON report: {args.output_json}")
     if args.output_md:
         print(f"Wrote Markdown report: {args.output_md}")

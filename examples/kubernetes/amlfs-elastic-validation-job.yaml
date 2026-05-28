@@ -1,0 +1,271 @@
+# Validates the Azure Managed Lustre Filesystem (AMLFS) training-data strategy
+# across elastic GPU node placement. Run this before the full dataset read jobs
+# to prove that each candidate node can mount AMLFS and expose HSM state.
+#
+# Edit the node names, PVC name, namespace, and DATASET_PATH for your cluster.
+# Use an image with Lustre client tools if you need `lfs hsm_state` / HSM tiering
+# evidence; `python:3.12-slim` can validate the mount and dataset shape but will
+# report that HSM commands are unavailable.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amlfs-elastic-validation
+  namespace: ray
+data:
+  dataset-path: /lustre
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: amlfs-validate-h200-c8r87
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: flex-h200-eastus2euap-c8r87
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: validator
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=amlfs-validate-h200-c8r87-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark amlfs-validate \
+                --path "amlfs=${DATASET_PATH}" \
+                --sample-files 1000 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: amlfs-elastic-validation
+                  key: dataset-path
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: amlfs-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: amlfs-training-data
+          persistentVolumeClaim:
+            claimName: lustre-h200-training
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: amlfs-validate-h200-glzff
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: flex-h200-eastus2euap-glzff
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: validator
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=amlfs-validate-h200-glzff-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark amlfs-validate \
+                --path "amlfs=${DATASET_PATH}" \
+                --sample-files 1000 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: amlfs-elastic-validation
+                  key: dataset-path
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: amlfs-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: amlfs-training-data
+          persistentVolumeClaim:
+            claimName: lustre-h200-training
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: amlfs-validate-h200-nxft5
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: flex-h200-nxft5
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: validator
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=amlfs-validate-h200-nxft5-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark amlfs-validate \
+                --path "amlfs=${DATASET_PATH}" \
+                --sample-files 1000 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: amlfs-elastic-validation
+                  key: dataset-path
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: amlfs-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: amlfs-training-data
+          persistentVolumeClaim:
+            claimName: lustre-h200-training
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: amlfs-validate-h200-vhkcm
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: flex-h200-vhkcm
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: validator
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+              RUN_ID=amlfs-validate-h200-vhkcm-$(date -u +%Y%m%d%H%M%S)
+              azure-storage-benchmark amlfs-validate \
+                --path "amlfs=${DATASET_PATH}" \
+                --sample-files 1000 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DATASET_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: amlfs-elastic-validation
+                  key: dataset-path
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 16Gi
+          volumeMounts:
+            - name: amlfs-training-data
+              mountPath: /lustre
+              readOnly: true
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: amlfs-training-data
+          persistentVolumeClaim:
+            claimName: lustre-h200-training
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training

@@ -4,11 +4,14 @@ import unittest
 from pathlib import Path
 
 from azure_storage_benchmarks.bench import (
+    AmlfsValidationConfig,
     BenchmarkConfig,
     DatasetReadConfig,
+    render_amlfs_validation_markdown,
     parse_named_path,
     render_dataset_read_markdown,
     render_markdown,
+    run_amlfs_validation,
     run_benchmarks,
     run_dataset_read_benchmarks,
     write_json_report,
@@ -142,6 +145,50 @@ class BenchmarkTests(unittest.TestCase):
         self.assertIn("Dataset Read Benchmark Results", markdown)
         self.assertIn("| lustre | yes | lustre | 10.0.0.1@tcp:/fs |", markdown)
         self.assertIn("Dataset details", markdown)
+
+    def test_run_amlfs_validation_samples_dataset_without_lfs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "b.bin").write_bytes(b"b" * 8)
+            (root / "a.bin").write_bytes(b"a" * 4)
+            config = AmlfsValidationConfig(sample_files=1, run_id="amlfs")
+
+            report = run_amlfs_validation({"amlfs": root}, config)
+
+        result = report["results"][0]
+        self.assertTrue(result["ok"], result["error"])
+        self.assertEqual(report["schema_version"], "1")
+        self.assertEqual(result["dataset"]["sample_files"], 1)
+        self.assertEqual(result["dataset"]["sample_bytes"], 4)
+        self.assertFalse(result["hsm"]["lfs_available"])
+        self.assertIn("lfs command is not available", result["hsm"]["state"]["stderr"])
+
+    def test_render_amlfs_validation_markdown(self):
+        report = {
+            "run_id": "amlfs",
+            "started_at": "2026-01-01T00:00:00Z",
+            "host": {"hostname": "test"},
+            "config": {"sample_files": 10},
+            "results": [
+                {
+                    "name": "amlfs",
+                    "ok": True,
+                    "mount": {"fs_type": "lustre", "source": "10.0.0.1@tcp:/lustrefs"},
+                    "dataset": {"sample_files": 2, "sample_bytes": 1024},
+                    "hsm": {
+                        "lfs_available": True,
+                        "state": {"returncode": 0, "stdout": "released exists", "stderr": ""},
+                    },
+                    "error": "",
+                }
+            ],
+        }
+
+        markdown = render_amlfs_validation_markdown(report)
+
+        self.assertIn("AMLFS Strategy Validation", markdown)
+        self.assertIn("| amlfs | yes | lustre | 10.0.0.1@tcp:/lustrefs |", markdown)
+        self.assertIn("| yes | yes |", markdown)
 
     def test_write_json_and_render_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:

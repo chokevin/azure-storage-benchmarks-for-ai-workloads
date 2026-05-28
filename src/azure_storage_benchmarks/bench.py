@@ -69,6 +69,16 @@ class DatasetReadConfig:
             raise ValueError(f"block_size_mib must be > 0, got {self.block_size_mib}")
 
 
+@dataclass(frozen=True)
+class AmlfsValidationConfig:
+    sample_files: int = 1000
+    run_id: str | None = None
+
+    def validate(self) -> None:
+        if self.sample_files <= 0:
+            raise ValueError(f"sample_files must be > 0, got {self.sample_files}")
+
+
 def parse_named_path(value: str) -> tuple[str, Path]:
     if "=" not in value:
         raise ValueError(f"path must be NAME=/mount/path, got {value!r}")
@@ -80,6 +90,67 @@ def parse_named_path(value: str) -> tuple[str, Path]:
     if not raw_path:
         raise ValueError(f"path value is empty in {value!r}")
     return name, Path(raw_path)
+
+
+def run_amlfs_validation(paths: dict[str, Path], config: AmlfsValidationConfig) -> dict:
+    config.validate()
+    run_id = config.run_id or time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    report = {
+        "schema_version": "1",
+        "run_id": run_id,
+        "started_at": started_at,
+        "host": {
+            "hostname": socket.gethostname(),
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+        },
+        "config": {
+            "sample_files": config.sample_files,
+        },
+        "results": [],
+    }
+    for name, base_path in paths.items():
+        report["results"].append(run_one_amlfs_validation_path(name, base_path, config))
+    return report
+
+
+def run_one_amlfs_validation_path(
+    name: str,
+    base_path: Path,
+    config: AmlfsValidationConfig,
+) -> dict:
+    result = {
+        "name": name,
+        "path": str(base_path),
+        "mount": _mount_info_for(base_path),
+        "lustre": _lustre_info_for(base_path),
+        "hsm": {},
+        "dataset": {},
+        "ok": False,
+        "error": "",
+    }
+    if not base_path.exists():
+        result["error"] = "path does not exist"
+        return result
+    if not base_path.is_dir():
+        result["error"] = "path is not a directory"
+        return result
+
+    try:
+        sample = _sample_dataset_files(base_path, config.sample_files)
+        result["dataset"] = {
+            "sample_files": len(sample),
+            "sample_bytes": sum(file_info["size"] for file_info in sample),
+            "size_histogram": _size_histogram([file_info["size"] for file_info in sample]),
+        }
+        result["hsm"] = _hsm_info_for(base_path, sample)
+        result["ok"] = True
+        return result
+    except Exception as exc:  # noqa: BLE001 - surface per-path failures in JSON report.
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        return result
 
 
 def run_dataset_read_benchmarks(paths: dict[str, Path], config: DatasetReadConfig) -> dict:
@@ -427,6 +498,49 @@ def write_json_report(report: dict, path: Path) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def render_amlfs_validation_markdown(report: dict) -> str:
+    lines = [
+        "# AMLFS Strategy Validation",
+        "",
+        f"- Run ID: `{report['run_id']}`",
+        f"- Started: `{report['started_at']}`",
+        f"- Host: `{report['host']['hostname']}`",
+        f"- Sample files: `{report['config']['sample_files']}`",
+        "",
+        "| Target | OK | FS type | Mount source | Sample files | Sample bytes | HSM tool | HSM state OK | Error |",
+        "|---|---:|---|---|---:|---:|---:|---:|---|",
+    ]
+    for result in report["results"]:
+        mount = result.get("mount") or {}
+        dataset = result.get("dataset") or {}
+        hsm = result.get("hsm") or {}
+        hsm_state = hsm.get("state") or {}
+        lines.append(
+            "| {name} | {ok} | {fs_type} | {source} | {sample_files} | {sample_bytes} | {hsm_tool} | {hsm_state_ok} | {error} |".format(
+                name=result["name"],
+                ok="yes" if result["ok"] else "no",
+                fs_type=(mount.get("fs_type") or "").replace("|", "\\|"),
+                source=(mount.get("source") or "").replace("|", "\\|"),
+                sample_files=dataset.get("sample_files", ""),
+                sample_bytes=dataset.get("sample_bytes", ""),
+                hsm_tool="yes" if hsm.get("lfs_available") else "no",
+                hsm_state_ok="yes" if hsm_state.get("returncode") == 0 else "no",
+                error=(result.get("error") or "").replace("|", "\\|"),
+            )
+        )
+    lines.append("")
+    lines.append(
+        "This validates mount identity, sampled dataset shape, and whether Lustre HSM state is observable from the pod. It does not prove Blob sync unless HSM state commands are available and report expected states."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_amlfs_validation_markdown_report(report: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_amlfs_validation_markdown(report), encoding="utf-8")
+
+
 def render_dataset_read_markdown(report: dict) -> str:
     lines = [
         "# Dataset Read Benchmark Results",
@@ -622,6 +736,15 @@ def _select_dataset_files(base_path: Path, max_bytes: int | None) -> list[dict]:
     return selected
 
 
+def _sample_dataset_files(base_path: Path, limit: int) -> list[dict]:
+    sample = []
+    for path in sorted((entry for entry in base_path.rglob("*") if entry.is_file()), key=str):
+        sample.append({"path": path, "size": path.stat().st_size})
+        if len(sample) >= limit:
+            break
+    return sample
+
+
 def _read_dataset_files(
     selected_files: list[dict],
     concurrency: int,
@@ -692,10 +815,29 @@ def _size_histogram(sizes: list[int]) -> dict:
 
 def _lustre_info_for(path: Path) -> dict:
     if shutil.which("lfs") is None:
-        return {}
+        return {"lfs_available": False}
     return {
+        "lfs_available": True,
         "df": _run_lustre_command(["lfs", "df", "-h", str(path)]),
         "getstripe": _run_lustre_command(["lfs", "getstripe", str(path)]),
+    }
+
+
+def _hsm_info_for(base_path: Path, sample: list[dict]) -> dict:
+    if shutil.which("lfs") is None:
+        return {
+            "lfs_available": False,
+            "state": {
+                "returncode": None,
+                "stdout": "",
+                "stderr": "lfs command is not available in this image",
+            },
+        }
+    target = sample[0]["path"] if sample else base_path
+    return {
+        "lfs_available": True,
+        "state": _run_lustre_command(["lfs", "hsm_state", str(target)]),
+        "archive_id": _run_lustre_command(["lfs", "hsm_archive", str(target)]),
     }
 
 
