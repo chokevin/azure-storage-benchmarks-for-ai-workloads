@@ -60,7 +60,8 @@ spec:
               mkdir -p "$STAGE_DIR" /data/storage-benchmarks
               RUN_ID="dolma-${DOLMA_VERSION}-amlfs-c8r87-$(date -u +%Y%m%d%H%M%S)"
               URL_FILE="/tmp/${RUN_ID}-urls.txt"
-              curl -fsSL "$URL_LIST" | head -n "$URL_LIMIT" > "$URL_FILE"
+              curl -fsSL "$URL_LIST" -o /tmp/dolma-urls-all.txt
+              head -n "$URL_LIMIT" /tmp/dolma-urls-all.txt > "$URL_FILE"
 
               echo "Staging $(wc -l < "$URL_FILE") Dolma URLs to $STAGE_DIR"
               xargs -a "$URL_FILE" -n 1 -P "$PARALLEL_DOWNLOADS" wget -q -nc -P "$STAGE_DIR"
