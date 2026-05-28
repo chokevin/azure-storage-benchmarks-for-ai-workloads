@@ -225,16 +225,21 @@ Live AMLFS validation on 2026-05-27:
   operationally than the AMLFS c8r87 run, which read the whole available 433 GB
   dataset in 120.601 seconds of read time.
 - HSM command observability was partially validated on
-  `flex-h200-eastus2euap-c8r87` with a bounded host-root probe,
-  `hsm-hostfs-c8`. The normal benchmark image still lacked `lfs`, but the node
-  host had `/usr/bin/lfs`; using `chroot /host`, the probe confirmed the mounted
-  AMLFS source `10.247.2.5@tcp:/lustrefs`, `lfs df -h` filesystem summary
-  `15.7T` total / `393.4G` used / `14.5T` available, and `lfs hsm_state` on one
-  sample file returned `(0x00000000)`. This proves `lfs` can inspect the mounted
-  filesystem from the node, but it does not prove Blob tiering is active: the
-  sample had no HSM flags, and repeatable HSM validation should still use a
-  benchmark pod image that includes Lustre client tools rather than a privileged
-  host-root workaround.
+  `flex-h200-eastus2euap-c8r87` with a bounded host-root debug probe against a
+  live pod mount. The normal benchmark image still lacked `lfs`, and running
+  `lfs` inside the CSI container against host paths reported "Not a Lustre
+  filesystem" because it was outside the host mount namespace. From the node
+  mount namespace, `/usr/bin/lfs` confirmed the mounted AMLFS source
+  `10.247.2.5@tcp:/lustrefs`, `lfs df -h` filesystem summary `15.7T` total /
+  `393.4G` used / `14.5T` available, and two OSTs with about 196-197.5 GiB used
+  each. `lfs getstripe` reported progressive layout with 1 MiB stripe size:
+  stripe count 1 for 0-1 GiB, 5 for 1-100 GiB, 10 for 100-500 GiB, and `-1`
+  after 500 GiB. `lfs hsm_state` on one sample file returned `(0x00000000)`, and
+  `lfs hsm_archive` returned `Operation not permitted`. This proves `lfs` can
+  inspect the mounted filesystem from the node and that the sampled file has no
+  HSM flags, but it does not prove Blob tiering is active; repeatable HSM
+  validation still needs a benchmark pod image with Lustre client tools and
+  operator-approved HSM permissions.
 
 ## Async checkpoint-style write comparison
 
