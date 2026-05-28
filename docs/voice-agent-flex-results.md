@@ -172,6 +172,19 @@ Live AMLFS validation on 2026-05-27:
   The glzff run mounted successfully but spent much longer enumerating the same
   tree and read at less than half the c8r87 throughput, so the EUAP-only set is
   mount-compatible but not performance-uniform.
+- A native large-file sanity check on the same AMLFS mount wrote and read a
+  temporary 64 GiB sequential file per EUAP H200 node:
+
+  | Node | Run ID | Write GB/s | Read GB/s |
+  |---|---|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `lustre-native-sanity-c8r87-20260528072806` | 1.474 | 6.334 |
+  | `flex-h200-eastus2euap-glzff` | `lustre-native-sanity-glzff-20260528072940` | 0.902 | 6.485 |
+
+  This supports the interpretation that the lower 1.6-3.6 GB/s dataset-read
+  numbers are driven by dataset shape, enumeration, and client behavior rather
+  than a hard AMLFS sequential-read ceiling. Large-file single-client reads were
+  around 6.4 GB/s from both EUAP nodes, while writes were lower and varied by
+  node.
 - A same-node BlobFuse2 comparison job on `flex-h200-eastus2euap-c8r87` mounted
   `blob-training` at `/data`, but that mount exposed no files on the EUAP H200
   node. The run completed with zero selected bytes:
