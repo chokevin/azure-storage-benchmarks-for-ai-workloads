@@ -186,7 +186,11 @@ Live AMLFS validation on 2026-05-27:
   network reachability are valid. A fresh static Blob CSI PV/PVC with a unique
   volume handle and explicit BlobFuse2 protocol/cache options still mounted empty
   on flex. Treat this as a Blob CSI / BlobFuse2 flex-node mount behavior issue,
-  not as a storage-account access issue.
+  not as a storage-account access issue. Blob CSI logs on the flex node also
+  reported `error parsing volume id: "voiceagenttraining_training-data_flex",
+  should at least contain two #`, which points at the static PV
+  `volumeHandle`/driver parsing path as the next thing for the storage owner to
+  fix or replace with a dynamically provisioned Blob CSI volume.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
