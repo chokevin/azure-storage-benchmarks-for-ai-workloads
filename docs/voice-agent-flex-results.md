@@ -220,8 +220,8 @@ Live AMLFS validation on 2026-05-27:
   top-level entries, so the jobs were not empty-mount failures; they were still
   spending time in the recursive selection/read path. The 64 GiB cap job hit its
   7,200 second active deadline with no report, and the 1 GiB cap job hit its
-  1,800 second active deadline with no report. The full 50 TiB-cap job was still
-  running after more than 4 hours with no report. This is already much slower
+  1,800 second active deadline with no report. The full 50 TiB-cap job also hit
+  its 21,600 second active deadline with no report. This is much slower
   operationally than the AMLFS c8r87 run, which read the whole available 433 GB
   dataset in 120.601 seconds of read time.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
