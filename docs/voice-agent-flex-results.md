@@ -197,6 +197,16 @@ Live AMLFS validation on 2026-05-27:
   BlobFuse2/Blob CSI behavior on flex after a successful mount, or to using a
   supported dynamically provisioned Blob CSI configuration. No Blob CSI
   StorageClass was present in the cluster during this test.
+- A later live remount of the original `blob-training` PV on
+  `flex-h200-eastus2euap-c8r87` did expose the Blob container contents at
+  `/data`, matching the Blob CSI node plugin `globalmount`. After that, two
+  BlobFuse2 read jobs were started on the same node:
+  `blobfuse-euap-c8r87-read` with the same 50 TiB cap as the Lustre run and
+  `blobfuse-euap-c8r87-read-64g` with a 64 GiB cap. Both were still running after
+  25 and 13 minutes respectively, with no final report yet. That is already much
+  slower than the AMLFS c8r87 run, which read the whole available 433 GB dataset
+  in 120.601 seconds of read time, but final BlobFuse2 throughput should be taken
+  from the job reports once they complete.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
