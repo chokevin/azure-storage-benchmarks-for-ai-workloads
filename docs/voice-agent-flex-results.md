@@ -189,8 +189,14 @@ Live AMLFS validation on 2026-05-27:
   not as a storage-account access issue. Blob CSI logs on the flex node also
   reported `error parsing volume id: "voiceagenttraining_training-data_flex",
   should at least contain two #`, which points at the static PV
-  `volumeHandle`/driver parsing path as the next thing for the storage owner to
-  fix or replace with a dynamically provisioned Blob CSI volume.
+  `volumeHandle`/driver parsing path as one issue. A corrected static PV using
+  `volumeHandle: voiceagenttraining#training-data#flexfixed` was accepted by
+  Blob CSI and mounted successfully on both EUAP H200 nodes, but still listed
+  zero files; the driver logged a successful mount with
+  `--container-name=training-data`. This narrows the remaining blocker to
+  BlobFuse2/Blob CSI behavior on flex after a successful mount, or to using a
+  supported dynamically provisioned Blob CSI configuration. No Blob CSI
+  StorageClass was present in the cluster during this test.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
