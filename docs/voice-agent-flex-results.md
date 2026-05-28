@@ -203,10 +203,14 @@ Live AMLFS validation on 2026-05-27:
   BlobFuse2 read jobs were started on the same node:
   `blobfuse-euap-c8r87-read` with the same 50 TiB cap as the Lustre run and
   `blobfuse-euap-c8r87-read-64g` with a 64 GiB cap. Both were still running after
-  25 and 13 minutes respectively, with no final report yet. That is already much
-  slower than the AMLFS c8r87 run, which read the whole available 433 GB dataset
-  in 120.601 seconds of read time, but final BlobFuse2 throughput should be taken
-  from the job reports once they complete.
+  118 and 105 minutes respectively, with no final report yet. A 1 GiB cap job
+  was also still running after 5 minutes with no report. The mounted BlobFuse2
+  path showed 280 top-level entries, so the jobs were not empty-mount failures;
+  they were still spending time in the recursive selection/read path. This is
+  already much slower operationally than the AMLFS c8r87 run, which read the
+  whole available 433 GB dataset in 120.601 seconds of read time, but final
+  BlobFuse2 throughput should be taken from the job reports if they eventually
+  complete.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
