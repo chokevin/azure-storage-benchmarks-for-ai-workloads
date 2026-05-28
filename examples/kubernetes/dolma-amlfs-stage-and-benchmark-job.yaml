@@ -1,0 +1,125 @@
+# Stages an open Dolma dataset slice onto AMLFS, then runs the read-only
+# dataset-read benchmark against the staged files.
+#
+# Safety defaults:
+# - This stages only 100 URL-list entries by default. Increase `url-limit` only
+#   when you are ready to download multi-TB data.
+# - Output reports go to Blob-backed `/data/storage-benchmarks`.
+# - Staged Dolma files stay on AMLFS so follow-up jobs can reuse them.
+#
+# Dolma dataset card: https://huggingface.co/datasets/allenai/dolma
+# License: ODC-BY 1.0, with upstream source license/terms caveats documented by
+# Allen AI.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dolma-amlfs-stage-benchmark
+  namespace: ray
+data:
+  dolma-version: v1_7
+  url-list: https://huggingface.co/datasets/allenai/dolma/raw/main/urls/v1_7.txt
+  url-limit: "100"
+  parallel-downloads: "16"
+  stage-dir: /lustre/datasets/dolma/v1_7
+  benchmark-max-bytes: "54975581388800"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dolma-amlfs-stage-benchmark-c8r87
+  namespace: ray
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 86400
+  ttlSecondsAfterFinished: 604800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: flex-h200-eastus2euap-c8r87
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: sku
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: stage-and-benchmark
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates curl wget xargs
+              rm -rf /var/lib/apt/lists/*
+              python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
+
+              mkdir -p "$STAGE_DIR" /data/storage-benchmarks
+              RUN_ID="dolma-${DOLMA_VERSION}-amlfs-c8r87-$(date -u +%Y%m%d%H%M%S)"
+              URL_FILE="/tmp/${RUN_ID}-urls.txt"
+              curl -fsSL "$URL_LIST" | head -n "$URL_LIMIT" > "$URL_FILE"
+
+              echo "Staging $(wc -l < "$URL_FILE") Dolma URLs to $STAGE_DIR"
+              xargs -a "$URL_FILE" -n 1 -P "$PARALLEL_DOWNLOADS" wget -q -nc -P "$STAGE_DIR"
+
+              azure-storage-benchmark dataset-read \
+                --path "dolma=${STAGE_DIR}" \
+                --max-bytes "$BENCHMARK_MAX_BYTES" \
+                --concurrency 16 \
+                --block-size-mib 16 \
+                --run-id "$RUN_ID" \
+                --output-json "/data/storage-benchmarks/${RUN_ID}.json" \
+                --output-md "/data/storage-benchmarks/${RUN_ID}.md"
+          env:
+            - name: DOLMA_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: dolma-version
+            - name: URL_LIST
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: url-list
+            - name: URL_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: url-limit
+            - name: PARALLEL_DOWNLOADS
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: parallel-downloads
+            - name: STAGE_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: stage-dir
+            - name: BENCHMARK_MAX_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: dolma-amlfs-stage-benchmark
+                  key: benchmark-max-bytes
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+            limits:
+              cpu: "32"
+              memory: 64Gi
+          volumeMounts:
+            - name: lustre
+              mountPath: /lustre
+            - name: blob-training
+              mountPath: /data
+      volumes:
+        - name: lustre
+          persistentVolumeClaim:
+            claimName: lustre-h200-training
+        - name: blob-training
+          persistentVolumeClaim:
+            claimName: blob-training

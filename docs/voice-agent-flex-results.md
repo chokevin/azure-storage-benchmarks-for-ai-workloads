@@ -140,6 +140,13 @@ Before claiming the strategy holds, validate:
   50-150 TB active dataset. A live `/lustre` probe on 2026-05-27 selected only
   433,475,177,051 bytes, so a 50 TiB cap completed after reading all available
   data rather than proving a 50 TiB dataset scan.
+- **Larger open-data staging:** use
+  `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` to stage a
+  capped slice of Allen AI's Dolma corpus onto AMLFS before benchmarking. Dolma
+  v1.7 is documented as 4.5 TB gzip under ODC-BY, with upstream source
+  license/terms caveats. The example defaults to only 100 URL-list entries for
+  safety; increase `url-limit` and `parallel-downloads` deliberately when moving
+  from a smoke slice to a multi-TB validation.
 - **Elastic placement:** every node class that can receive the training workload
   can mount the same AMLFS endpoint. The `amlfs-elastic-validation-job.yaml`
   example pins one validation job per candidate flex H200 node so mount failures

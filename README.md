@@ -94,6 +94,10 @@ Additional examples:
 - `examples/kubernetes/amlfs-elastic-validation-job.yaml` validates the AMLFS
   mount and HSM observability across specific flex nodes before relying on an
   elastic GPU label.
+- `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` stages an
+  explicitly capped slice of the open Dolma pretraining corpus onto AMLFS and
+  benchmarks it. Increase the URL cap only when you are ready for multi-TB
+  downloads.
 - `examples/pytorch/gpt2_async_checkpoint.py` trains a tiny GPT-style PyTorch
   model on Hugging Face text data and reports sync vs async checkpoint behavior,
   separating pure training-step throughput from loop throughput that includes
