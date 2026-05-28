@@ -172,6 +172,13 @@ Live AMLFS validation on 2026-05-27:
   The glzff run mounted successfully but spent much longer enumerating the same
   tree and read at less than half the c8r87 throughput, so the EUAP-only set is
   mount-compatible but not performance-uniform.
+- A same-node BlobFuse2 comparison job on `flex-h200-eastus2euap-c8r87` mounted
+  `blob-training` at `/data`, but that mount exposed no files on the EUAP H200
+  node. The run completed with zero selected bytes:
+  `blobfuse-training-read-compare-20260528030421`. This means the current
+  cluster state cannot produce a same-dataset BlobFuse2-vs-AMLFS training-data
+  comparison from the EUAP H200 nodes; the Blob container contents must first be
+  made visible there or the same dataset must be staged under BlobFuse2.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
