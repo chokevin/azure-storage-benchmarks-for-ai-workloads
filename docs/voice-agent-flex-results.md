@@ -146,7 +146,10 @@ Before claiming the strategy holds, validate:
   v1.7 is documented as 4.5 TB gzip under ODC-BY, with upstream source
   license/terms caveats. The example defaults to only 100 URL-list entries for
   safety; increase `url-limit` and `parallel-downloads` deliberately when moving
-  from a smoke slice to a multi-TB validation.
+  from a smoke slice to a multi-TB validation. This example was executed on
+  2026-05-28 (see the Dolma result below): the default 100-URL slice staged
+  174,479,448,489 bytes of `books`/`c4` gzip shards onto AMLFS and benchmarked
+  cleanly.
 - **Elastic placement:** every node class that can receive the training workload
   can mount the same AMLFS endpoint. The `amlfs-elastic-validation-job.yaml`
   example pins one validation job per candidate flex H200 node so mount failures
@@ -247,6 +250,24 @@ Live AMLFS validation on 2026-05-27:
   HSM flags, but it does not prove Blob tiering is active; repeatable HSM
   validation still needs a benchmark pod image with Lustre client tools and
   operator-approved HSM permissions.
+- An open-source Dolma staging run on 2026-05-28 executed
+  `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` on
+  `flex-h200-eastus2euap-c8r87`. The default 100-URL slice staged
+  174,479,448,489 bytes of Dolma v1.7 `books`/`c4` gzip shards (100 files, all
+  >= 1 GiB) under `/lustre/datasets/dolma/v1_7`, then ran `dataset-read`:
+
+  | Node | Run ID | Files | Bytes read | Enumerate s | Read s | Wall s | Read GB/s | Read GiB/s |
+  |---|---|---:|---:|---:|---:|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `dolma-v1_7-amlfs-c8r87-20260528200226` | 100 | 174,479,436,201 | 0.007 | 45.797 | 45.804 | 3.810 | 3.548 |
+
+  This is the cleanest dataset-read result on AMLFS so far: a uniformly
+  large-file (>= 1 GiB) corpus enumerated in 0.007 s, removing the
+  enumeration penalty seen on the mixed 433 GB tree, and sustained 3.810 GB/s
+  from a single client. It confirms a reproducible open-data path
+  (stage capped Dolma slice, then benchmark) and matches the large-file sanity
+  interpretation that earlier 1.6-3.6 GB/s numbers were enumeration/shape/client
+  limited rather than an AMLFS sequential-read ceiling. It is still a ~174 GB
+  single-client read, not a 50-150 TB multi-client scan.
 
 ## Async checkpoint-style write comparison
 

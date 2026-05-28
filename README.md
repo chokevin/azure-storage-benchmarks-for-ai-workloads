@@ -97,7 +97,9 @@ Additional examples:
 - `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` stages an
   explicitly capped slice of the open Dolma pretraining corpus onto AMLFS and
   benchmarks it. Increase the URL cap only when you are ready for multi-TB
-  downloads.
+  downloads. A live run of the default 100-URL slice (~174 GB of Dolma v1.7
+  `books`/`c4` shards) read at 3.810 GB/s on a `voice-agent-flex` EUAP H200
+  node; see `docs/voice-agent-flex-results.md`.
 - `examples/pytorch/gpt2_async_checkpoint.py` trains a tiny GPT-style PyTorch
   model on Hugging Face text data and reports sync vs async checkpoint behavior,
   separating pure training-step throughput from loop throughput that includes
