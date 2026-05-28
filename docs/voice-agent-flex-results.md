@@ -179,6 +179,14 @@ Live AMLFS validation on 2026-05-27:
   cluster state cannot produce a same-dataset BlobFuse2-vs-AMLFS training-data
   comparison from the EUAP H200 nodes; the Blob container contents must first be
   made visible there or the same dataset must be staged under BlobFuse2.
+  Follow-up probes showed the same `blob-training` PV exposes data on AKS CPU and
+  A100 nodes, while flex H200 mounts are empty. Direct `az storage blob list`
+  from `flex-h200-eastus2euap-c8r87` using the same `azure-blob-secret`
+  credentials listed the container contents, so credentials and storage-account
+  network reachability are valid. A fresh static Blob CSI PV/PVC with a unique
+  volume handle and explicit BlobFuse2 protocol/cache options still mounted empty
+  on flex. Treat this as a Blob CSI / BlobFuse2 flex-node mount behavior issue,
+  not as a storage-account access issue.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
