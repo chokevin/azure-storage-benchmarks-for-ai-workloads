@@ -224,7 +224,17 @@ Live AMLFS validation on 2026-05-27:
   its 21,600 second active deadline with no report. This is much slower
   operationally than the AMLFS c8r87 run, which read the whole available 433 GB
   dataset in 120.601 seconds of read time.
-- HSM state remains unvalidated because the runtime image lacked `lfs`.
+- HSM command observability was partially validated on
+  `flex-h200-eastus2euap-c8r87` with a bounded host-root probe,
+  `hsm-hostfs-c8`. The normal benchmark image still lacked `lfs`, but the node
+  host had `/usr/bin/lfs`; using `chroot /host`, the probe confirmed the mounted
+  AMLFS source `10.247.2.5@tcp:/lustrefs`, `lfs df -h` filesystem summary
+  `15.7T` total / `393.4G` used / `14.5T` available, and `lfs hsm_state` on one
+  sample file returned `(0x00000000)`. This proves `lfs` can inspect the mounted
+  filesystem from the node, but it does not prove Blob tiering is active: the
+  sample had no HSM flags, and repeatable HSM validation should still use a
+  benchmark pod image that includes Lustre client tools rather than a privileged
+  host-root workaround.
 
 ## Async checkpoint-style write comparison
 
