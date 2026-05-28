@@ -159,8 +159,19 @@ Live AMLFS validation on 2026-05-27:
   413,283,828,424 bytes. The mount source was `10.247.2.5@tcp:/lustrefs`.
 - `amlfs-validate-h200-nxft5` and `amlfs-validate-h200-vhkcm` failed to mount the
   same PVC with `mount.lustre ... Input/output error; Is the MGS running?`.
-- `amlfs-validate-h200-glzff` mounted and started but was still running during
-  the capture window.
+- `amlfs-validate-h200-glzff` also completed and sampled the same 1,000 files
+  totaling 413,283,828,424 bytes from `10.247.2.5@tcp:/lustrefs`.
+- EUAP-only read reruns on the verified nodes both completed over the available
+  433,475,177,051-byte dataset:
+
+  | Node | Run ID | Enumerate s | Read s | Wall s | Read GB/s |
+  |---|---|---:|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `lustre-euap-c8r87-read-20260528022917` | 67.418 | 120.601 | 188.020 | 3.594 |
+  | `flex-h200-eastus2euap-glzff` | `lustre-euap-glzff-read-20260528022934` | 870.815 | 270.483 | 1141.297 | 1.603 |
+
+  The glzff run mounted successfully but spent much longer enumerating the same
+  tree and read at less than half the c8r87 throughput, so the EUAP-only set is
+  mount-compatible but not performance-uniform.
 - HSM state remains unvalidated because the runtime image lacked `lfs`.
 
 ## Async checkpoint-style write comparison
