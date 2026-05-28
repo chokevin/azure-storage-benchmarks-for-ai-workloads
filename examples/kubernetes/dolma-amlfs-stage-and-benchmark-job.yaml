@@ -53,7 +53,7 @@ spec:
             - |
               set -euo pipefail
               apt-get update
-              apt-get install -y --no-install-recommends ca-certificates curl wget xargs
+              apt-get install -y --no-install-recommends ca-certificates curl findutils wget
               rm -rf /var/lib/apt/lists/*
               python -m pip install -q "https://github.com/chokevin/azure-storage-benchmarks-for-ai-workloads/archive/refs/heads/main.zip"
 
