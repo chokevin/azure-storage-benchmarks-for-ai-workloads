@@ -1,6 +1,7 @@
 # Runs the GPT-style async checkpoint PyTorch sample once per GPU SKU.
 #
-# This assumes the voice-agent-flex-style cluster labels GPU nodes with
+# This assumes an `aks-ai-runtime-flex`-style cluster (managed A100 plus
+# eastuseuap H200 joined via Flex) labels GPU nodes with
 # `gpu=a100`, `gpu=h100`, and `gpu=h200`, and uses the DRA ResourceClaimTemplate
 # `full-gpu` for one full GPU.
 #

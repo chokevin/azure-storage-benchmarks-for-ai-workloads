@@ -4,6 +4,14 @@ This page records the real workload-shaped benchmark runs from the
 `voice-agent-flex` AKS cluster. These are not generic storage claims; they are
 evidence for one observed voice/autoresearch access pattern.
 
+> Cluster baseline note: `voice-agent-flex` was the cluster used for these
+> historical captures. The current baseline is `aks-ai-runtime-eastus2`
+> (2x8 H200 in eastus2, managed) for H200-only work and `aks-ai-runtime-flex`
+> (2x8 A100 managed plus 2x8 eastuseuap H200 joined via Flex) for mixed/Flex
+> and AMLFS/Lustre work. The results below are intentionally left under their
+> original `voice-agent-flex` provenance; current examples and guidance point at
+> the new cluster names.
+
 ## Why this was measured
 
 Heavy transcription and voice-agent training work appeared slow when reading
@@ -87,6 +95,208 @@ Blob NFS v3 helped the earlier directory-listing-heavy synthetic run, but it did
 not help this tiny-file read/open pattern. For this voice/autoresearch sample,
 the practical fix is to stage or pack the tiny files before heavy training or
 transcription loops.
+
+## Lustre CSI training-data read plan
+
+Lustre was the remaining backend not captured in the earlier `voice-agent-flex`
+storage runs. With the Lustre CSI driver now mounted, use the read-only dataset
+benchmark instead of the generated read/write harness so the run measures the
+actual training-data layout and does not write benchmark payloads into Lustre.
+
+Example manifest:
+
+```bash
+kubectl apply -f examples/kubernetes/lustre-training-data-read-job.yaml
+```
+
+Before applying, edit the manifest if needed:
+
+- `claimName: lustre-training-data` should match the Lustre CSI PVC.
+- `dataset-root: /lustre/training-data` should contain `1tib`, `5tib`,
+  `10tib`, and `50tib` directories, or the job paths should be adjusted to the
+  real dataset directories.
+- The default jobs target `gpu: h100` nodes with `concurrency=16` and
+  `block-size-mib=16`. Increase concurrency only if the pod has enough CPU and
+  the Lustre server/client network can absorb the extra read pressure.
+- On the live `lustre-h200-training` PVC, the mount succeeded on
+  `flex-h200-eastus2euap-c8r87` but failed on `flex-h200-nxft5` with a Lustre
+  MGS input/output error. If you use that PVC, pin to a verified node or update
+  node placement after confirming the Lustre endpoint is routable from the node.
+
+The four jobs write Markdown and JSON reports to:
+
+```text
+/data/storage-benchmarks/lustre-training-data-read-{1tib,5tib,10tib,50tib}-*.{json,md}
+```
+
+The benchmark reports both enumeration time and read time. Use read-time GB/s as
+the storage throughput signal; use wall time when planning end-to-end training
+startup or epoch scan cost. Multi-iteration runs are intentionally avoided here
+because later passes may be served from page cache instead of Lustre.
+
+### AMLFS strategy validation gaps
+
+The target storage strategy is Azure Managed Lustre Filesystem (AMLFS) for an
+active 50-150 TB training dataset, with Blob sync through HSM tiering, under an
+elastic GPU reallocation model. The dataset-read benchmark validates the read
+path only after a pod has mounted AMLFS. It is not sufficient by itself for that
+strategy.
+
+Before claiming the strategy holds, validate:
+
+- **Dataset scale:** the mounted AMLFS path actually contains the intended
+  50-150 TB active dataset. A live `/lustre` probe on 2026-05-27 selected only
+  433,475,177,051 bytes, so a 50 TiB cap completed after reading all available
+  data rather than proving a 50 TiB dataset scan.
+- **Larger open-data staging:** use
+  `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` to stage a
+  capped slice of Allen AI's Dolma corpus onto AMLFS before benchmarking. Dolma
+  v1.7 is documented as 4.5 TB gzip under ODC-BY, with upstream source
+  license/terms caveats. The example defaults to only 100 URL-list entries for
+  safety; increase `url-limit` and `parallel-downloads` deliberately when moving
+  from a smoke slice to a multi-TB validation. This example was executed on
+  2026-05-28 (see the Dolma result below): the default 100-URL slice staged
+  174,479,448,489 bytes of `books`/`c4` gzip shards onto AMLFS and benchmarked
+  cleanly.
+- **Elastic placement:** every node class that can receive the training workload
+  can mount the same AMLFS endpoint. The `amlfs-elastic-validation-job.yaml`
+  example pins one validation job per candidate flex H200 node so mount failures
+  are visible.
+- **HSM/Blob tiering:** the pod image must include Lustre client tools. The
+  `python:3.12-slim` image used by the simple examples does not include `lfs`,
+  so it can validate mount/read behavior but not `lfs hsm_state` or archive
+  state. Use `azure-storage-benchmark amlfs-validate` with a Lustre-capable image
+  to capture HSM state signals.
+
+Live AMLFS validation on 2026-05-27:
+
+- `lustre-read-{1,5,10,50}tib-live` all completed on
+  `flex-h200-eastus2euap-c8r87`, but each cap read the same available 433 GB
+  dataset rather than distinct 1/5/10/50 TiB datasets.
+- `amlfs-validate-h200-c8r87` completed and sampled 1,000 files totaling
+  413,283,828,424 bytes. The mount source was `10.247.2.5@tcp:/lustrefs`.
+- `amlfs-validate-h200-nxft5` and `amlfs-validate-h200-vhkcm` failed to mount the
+  same PVC with `mount.lustre ... Input/output error; Is the MGS running?`.
+- `amlfs-validate-h200-glzff` also completed and sampled the same 1,000 files
+  totaling 413,283,828,424 bytes from `10.247.2.5@tcp:/lustrefs`.
+- EUAP-only read reruns on the verified nodes both completed over the available
+  433,475,177,051-byte dataset:
+
+  | Node | Run ID | Enumerate s | Read s | Wall s | Read GB/s |
+  |---|---|---:|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `lustre-euap-c8r87-read-20260528022917` | 67.418 | 120.601 | 188.020 | 3.594 |
+  | `flex-h200-eastus2euap-glzff` | `lustre-euap-glzff-read-20260528022934` | 870.815 | 270.483 | 1141.297 | 1.603 |
+
+  The glzff run mounted successfully but spent much longer enumerating the same
+  tree and read at less than half the c8r87 throughput, so the EUAP-only set is
+  mount-compatible but not performance-uniform.
+- A native large-file sanity check on the same AMLFS mount wrote and read a
+  temporary 64 GiB sequential file per EUAP H200 node:
+
+  | Node | Run ID | Write GB/s | Read GB/s |
+  |---|---|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `lustre-native-sanity-c8r87-20260528072806` | 1.474 | 6.334 |
+  | `flex-h200-eastus2euap-glzff` | `lustre-native-sanity-glzff-20260528072940` | 0.902 | 6.485 |
+
+  This supports the interpretation that the lower 1.6-3.6 GB/s dataset-read
+  numbers are driven by dataset shape, enumeration, and client behavior rather
+  than a hard AMLFS sequential-read ceiling. Large-file single-client reads were
+  around 6.4 GB/s from both EUAP nodes, while writes were lower and varied by
+  node.
+- A same-node BlobFuse2 comparison job on `flex-h200-eastus2euap-c8r87` mounted
+  `blob-training` at `/data`, but that mount exposed no files on the EUAP H200
+  node. The run completed with zero selected bytes:
+  `blobfuse-training-read-compare-20260528030421`. This means the current
+  cluster state cannot produce a same-dataset BlobFuse2-vs-AMLFS training-data
+  comparison from the EUAP H200 nodes; the Blob container contents must first be
+  made visible there or the same dataset must be staged under BlobFuse2.
+  Follow-up probes showed the same `blob-training` PV exposes data on AKS CPU and
+  A100 nodes, while flex H200 mounts are empty. Direct `az storage blob list`
+  from `flex-h200-eastus2euap-c8r87` using the same `azure-blob-secret`
+  credentials listed the container contents, so credentials and storage-account
+  network reachability are valid. A fresh static Blob CSI PV/PVC with a unique
+  volume handle and explicit BlobFuse2 protocol/cache options still mounted empty
+  on flex. Treat this as a Blob CSI / BlobFuse2 flex-node mount behavior issue,
+  not as a storage-account access issue. Blob CSI logs on the flex node also
+  reported `error parsing volume id: "voiceagenttraining_training-data_flex",
+  should at least contain two #`, which points at the static PV
+  `volumeHandle`/driver parsing path as one issue. A corrected static PV using
+  `volumeHandle: voiceagenttraining#training-data#flexfixed` was accepted by
+  Blob CSI and mounted successfully on both EUAP H200 nodes, but still listed
+  zero files; the driver logged a successful mount with
+  `--container-name=training-data`. This narrows the remaining blocker to
+  BlobFuse2/Blob CSI behavior on flex after a successful mount, or to using a
+  supported dynamically provisioned Blob CSI configuration. No Blob CSI
+  StorageClass was present in the cluster during this test.
+- A later live remount of the original `blob-training` PV on
+  `flex-h200-eastus2euap-c8r87` did expose the Blob container contents at
+  `/data`, matching the Blob CSI node plugin `globalmount`. After that, two
+  BlobFuse2 read jobs were started on the same node:
+  `blobfuse-euap-c8r87-read` with the same 50 TiB cap as the Lustre run and
+  `blobfuse-euap-c8r87-read-64g` with a 64 GiB cap. A later 1 GiB cap job was
+  also started to get a bounded result. The mounted BlobFuse2 path showed 280
+  top-level entries, so the jobs were not empty-mount failures; they were still
+  spending time in the recursive selection/read path. The 64 GiB cap job hit its
+  7,200 second active deadline with no report, and the 1 GiB cap job hit its
+  1,800 second active deadline with no report. The full 50 TiB-cap job also hit
+  its 21,600 second active deadline with no report. This is much slower
+  operationally than the AMLFS c8r87 run, which read the whole available 433 GB
+  dataset in 120.601 seconds of read time.
+- HSM command observability was partially validated on
+  `flex-h200-eastus2euap-c8r87` with a bounded host-root debug probe against a
+  live pod mount. The normal benchmark image still lacked `lfs`, and running
+  `lfs` inside the CSI container against host paths reported "Not a Lustre
+  filesystem" because it was outside the host mount namespace. From the node
+  mount namespace, `/usr/bin/lfs` confirmed the mounted AMLFS source
+  `10.247.2.5@tcp:/lustrefs`, `lfs df -h` filesystem summary `15.7T` total /
+  `393.4G` used / `14.5T` available, and two OSTs with about 196-197.5 GiB used
+  each. `lfs getstripe` reported progressive layout with 1 MiB stripe size:
+  stripe count 1 for 0-1 GiB, 5 for 1-100 GiB, 10 for 100-500 GiB, and `-1`
+  after 500 GiB. `lfs hsm_state` on one sample file returned `(0x00000000)`, and
+  `lfs hsm_archive` returned `Operation not permitted`. This proves `lfs` can
+  inspect the mounted filesystem from the node and that the sampled file has no
+  HSM flags, but it does not prove Blob tiering is active; repeatable HSM
+  validation still needs a benchmark pod image with Lustre client tools and
+  operator-approved HSM permissions.
+- An open-source Dolma staging run on 2026-05-28 executed
+  `examples/kubernetes/dolma-amlfs-stage-and-benchmark-job.yaml` on
+  `flex-h200-eastus2euap-c8r87`. The default 100-URL slice staged
+  174,479,448,489 bytes of Dolma v1.7 `books`/`c4` gzip shards (100 files, all
+  >= 1 GiB) under `/lustre/datasets/dolma/v1_7`, then ran `dataset-read`:
+
+  | Node | Run ID | Files | Bytes read | Enumerate s | Read s | Wall s | Read GB/s | Read GiB/s |
+  |---|---|---:|---:|---:|---:|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `dolma-v1_7-amlfs-c8r87-20260528200226` | 100 | 174,479,436,201 | 0.007 | 45.797 | 45.804 | 3.810 | 3.548 |
+
+  This is the cleanest dataset-read result on AMLFS so far: a uniformly
+  large-file (>= 1 GiB) corpus enumerated in 0.007 s, removing the
+  enumeration penalty seen on the mixed 433 GB tree, and sustained 3.810 GB/s
+  from a single client. It confirms a reproducible open-data path
+  (stage capped Dolma slice, then benchmark) and matches the large-file sanity
+  interpretation that earlier 1.6-3.6 GB/s numbers were enumeration/shape/client
+  limited rather than an AMLFS sequential-read ceiling. It is still a ~174 GB
+  single-client read, not a 50-150 TB multi-client scan.
+- A multi-pod aggregate test on 2026-05-28 split the staged Dolma slice into two
+  disjoint halves (hardlinked, 50 files each) and ran one `dataset-read` pod per
+  EUAP H200 node at the same time, barrier-synced to start together:
+
+  | Node | Run ID | Bytes read | Read s | Read GB/s |
+  |---|---|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `dolma-multi-c8r87-20260528211203` | 86,930,401,330 | 31.551 | 2.755 |
+  | `flex-h200-eastus2euap-glzff` | `dolma-multi-glzff-20260528211203` | 87,549,034,871 | 57.387 | 1.526 |
+
+  Peak aggregate while both pods read at once was about 4.28 GB/s (~34 Gbps).
+  Two things stand out. Adding a second client raised the aggregate only a
+  little (3.810 -> ~4.28 GB/s) and the fast node dropped from 3.810 to
+  2.755 GB/s once it shared the disks, so this filesystem is near its
+  provisioned ceiling: host-namespace `lfs df` showed 15.7 TiB over two OSTs.
+  And `glzff` read at ~1.5 GB/s here and in the earlier rerun (1.603 GB/s), so
+  it is a consistently slow node. Lustre's "tens of GB/s" numbers assume many
+  OSTs and many uniform clients; reaching ~40 GB/s here would need a larger or
+  higher-tier AMLFS with more OSTs, not a mount-option change on this two-OST
+  instance. The hardlinked shard directories remain at
+  `/lustre/datasets/dolma/v1_7_shards/{a,b}` for repeat runs (no extra space;
+  they reference the same inodes as `/lustre/datasets/dolma/v1_7`).
 
 ## Async checkpoint-style write comparison
 

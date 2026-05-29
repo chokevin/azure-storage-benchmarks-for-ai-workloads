@@ -51,6 +51,80 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["run_id"], "cli")
         self.assertIn("Storage Benchmark Results", markdown)
 
+    def test_cli_dataset_read_smoke_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dataset.bin").write_bytes(b"x" * 1024)
+            output_json = root / "dataset-result.json"
+            output_md = root / "dataset-result.md"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "azure_storage_benchmarks",
+                    "dataset-read",
+                    "--path",
+                    f"tmp={tmp}",
+                    "--max-bytes",
+                    "512",
+                    "--concurrency",
+                    "2",
+                    "--run-id",
+                    "cli-dataset",
+                    "--output-json",
+                    str(output_json),
+                    "--output-md",
+                    str(output_md),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            report = json.loads(output_json.read_text(encoding="utf-8"))
+            markdown = output_md.read_text(encoding="utf-8")
+
+        self.assertEqual(report["run_id"], "cli-dataset")
+        self.assertEqual(report["results"][0]["metrics"]["bytes_read"], 512)
+        self.assertIn("Dataset Read Benchmark Results", markdown)
+
+    def test_cli_amlfs_validate_smoke_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dataset.bin").write_bytes(b"x" * 1024)
+            output_json = root / "amlfs-result.json"
+            output_md = root / "amlfs-result.md"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "azure_storage_benchmarks",
+                    "amlfs-validate",
+                    "--path",
+                    f"amlfs={tmp}",
+                    "--sample-files",
+                    "1",
+                    "--run-id",
+                    "cli-amlfs",
+                    "--output-json",
+                    str(output_json),
+                    "--output-md",
+                    str(output_md),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
+            report = json.loads(output_json.read_text(encoding="utf-8"))
+            markdown = output_md.read_text(encoding="utf-8")
+
+        self.assertEqual(report["run_id"], "cli-amlfs")
+        self.assertEqual(report["results"][0]["dataset"]["sample_files"], 1)
+        self.assertIn("AMLFS Strategy Validation", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()
