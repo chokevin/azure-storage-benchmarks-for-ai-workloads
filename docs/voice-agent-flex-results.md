@@ -269,30 +269,24 @@ Live AMLFS validation on 2026-05-27:
   limited rather than an AMLFS sequential-read ceiling. It is still a ~174 GB
   single-client read, not a 50-150 TB multi-client scan.
 - A multi-pod aggregate test on 2026-05-28 split the staged Dolma slice into two
-  disjoint halves (hardlinked, 50 files / ~86.9 GB and 50 files / ~87.5 GB) and
-  ran one `dataset-read` pod per EUAP H200 node concurrently, using a wall-clock
-  barrier so both reads started at the same instant (`2026-05-28T21:12:03Z`):
+  disjoint halves (hardlinked, 50 files each) and ran one `dataset-read` pod per
+  EUAP H200 node at the same time, barrier-synced to start together:
 
-  | Node | Run ID | Shard files | Bytes read | Read s | Read GB/s |
-  |---|---|---:|---:|---:|---:|
-  | `flex-h200-eastus2euap-c8r87` | `dolma-multi-c8r87-20260528211203` | 50 | 86,930,401,330 | 31.551 | 2.755 |
-  | `flex-h200-eastus2euap-glzff` | `dolma-multi-glzff-20260528211203` | 50 | 87,549,034,871 | 57.387 | 1.526 |
+  | Node | Run ID | Bytes read | Read s | Read GB/s |
+  |---|---|---:|---:|---:|
+  | `flex-h200-eastus2euap-c8r87` | `dolma-multi-c8r87-20260528211203` | 86,930,401,330 | 31.551 | 2.755 |
+  | `flex-h200-eastus2euap-glzff` | `dolma-multi-glzff-20260528211203` | 87,549,034,871 | 57.387 | 1.526 |
 
-  Derived aggregate: peak concurrent throughput while both pods were actively
-  reading was about 4.28 GB/s (~34.2 Gbps); the makespan aggregate
-  (174 GB / 57.387 s, bounded by the slower node) was about 3.04 GB/s. Two
-  observations follow. First, adding a second client raised peak aggregate only
-  modestly (3.810 -> ~4.28 GB/s) and dropped the fast node from 3.810 to
-  2.755 GB/s once it shared the OSTs, which is consistent with a small
-  provisioned AMLFS (host-namespace `lfs df` showed 15.7 TiB total over two
-  OSTs) hitting its provisioned/OST aggregate ceiling rather than a per-client
-  limit. Second, `glzff` read at ~1.5 GB/s in both this run and the earlier
-  EUAP rerun (1.603 GB/s), so it is a consistently slower reader; its straggling
-  makes the makespan aggregate worse than a single fast client. The headline
-  "tens of GB/s" Lustre numbers assume many OSTs fed by many uniform clients;
-  reaching ~40 GB/s here would require a substantially larger / higher-tier
-  AMLFS (more OSTs) and uniform fast clients, not a mount-option change on this
-  two-OST instance. The hardlinked shard directories remain at
+  Peak aggregate while both pods read at once was about 4.28 GB/s (~34 Gbps).
+  Two things stand out. Adding a second client raised the aggregate only a
+  little (3.810 -> ~4.28 GB/s) and the fast node dropped from 3.810 to
+  2.755 GB/s once it shared the disks, so this filesystem is near its
+  provisioned ceiling: host-namespace `lfs df` showed 15.7 TiB over two OSTs.
+  And `glzff` read at ~1.5 GB/s here and in the earlier rerun (1.603 GB/s), so
+  it is a consistently slow node. Lustre's "tens of GB/s" numbers assume many
+  OSTs and many uniform clients; reaching ~40 GB/s here would need a larger or
+  higher-tier AMLFS with more OSTs, not a mount-option change on this two-OST
+  instance. The hardlinked shard directories remain at
   `/lustre/datasets/dolma/v1_7_shards/{a,b}` for repeat runs (no extra space;
   they reference the same inodes as `/lustre/datasets/dolma/v1_7`).
 
