@@ -90,7 +90,8 @@ Additional examples:
   v3 export. This requires storage account firewall/VNet setup before applying.
 - `examples/kubernetes/lustre-training-data-read-job.yaml` runs read-only
   Lustre CSI dataset scans for 1 TiB, 5 TiB, 10 TiB, and 50 TiB training-data
-  tiers on `voice-agent-flex`-style clusters.
+  tiers on `aks-ai-runtime-flex`-style clusters (the Lustre/AMLFS mount lives on
+  the eastuseuap H200 nodes joined via Flex).
 - `examples/kubernetes/amlfs-elastic-validation-job.yaml` validates the AMLFS
   mount and HSM observability across specific flex nodes before relying on an
   elastic GPU label.

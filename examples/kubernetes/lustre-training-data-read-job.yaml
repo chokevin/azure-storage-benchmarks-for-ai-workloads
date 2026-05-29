@@ -1,5 +1,6 @@
 # Reads existing training-data directories from the Lustre CSI mount on
-# voice-agent-flex. Edit `claimName` and DATASET_ROOT if your PVC or directory
+# aks-ai-runtime-flex (Lustre/AMLFS is on the eastuseuap H200 nodes joined via
+# Flex). Edit `claimName` and DATASET_ROOT if your PVC or directory
 # layout differs.
 #
 # The jobs are intentionally read-only: results are written to the existing

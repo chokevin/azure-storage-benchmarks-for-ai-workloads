@@ -4,6 +4,14 @@ This page records the real workload-shaped benchmark runs from the
 `voice-agent-flex` AKS cluster. These are not generic storage claims; they are
 evidence for one observed voice/autoresearch access pattern.
 
+> Cluster baseline note: `voice-agent-flex` was the cluster used for these
+> historical captures. The current baseline is `aks-ai-runtime-eastus2`
+> (2x8 H200 in eastus2, managed) for H200-only work and `aks-ai-runtime-flex`
+> (2x8 A100 managed plus 2x8 eastuseuap H200 joined via Flex) for mixed/Flex
+> and AMLFS/Lustre work. The results below are intentionally left under their
+> original `voice-agent-flex` provenance; current examples and guidance point at
+> the new cluster names.
+
 ## Why this was measured
 
 Heavy transcription and voice-agent training work appeared slow when reading
