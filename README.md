@@ -37,9 +37,9 @@ See [docs/storage-alternatives.md](docs/storage-alternatives.md) for a broader
 alternatives matrix, including Lustre-style filesystems, WEKA, MinIO, Ceph, and
 cache layers.
 
-See [docs/voice-agent-flex-results.md](docs/voice-agent-flex-results.md) for a
-real `voice-agent-flex` capture that profiles a voice/autoresearch small-file
-path and compares BlobFuse, Blob NFS v3, Azure Disk, and local scratch.
+See [docs/voice-agent-flex-results.md](docs/voice-agent-flex-results.md) for
+general Blob vs. Azure Managed Lustre guidance, use-case selection, and the
+supporting `voice-agent-flex` benchmark evidence.
 
 See [docs/rune-azure-storage-defaults.md](docs/rune-azure-storage-defaults.md)
 for recommended Rune job defaults on Azure: Blob as durable storage, `/mnt` as
